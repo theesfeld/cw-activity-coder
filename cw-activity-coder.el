@@ -1,6 +1,6 @@
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes -*- lexical-binding: t; -*-
 
-;; Author: Your Name <your.email@example.com>
+;; Author: Your Name william@theesfeld.net
 ;; Version: 0.4
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3.7") (org "9.6"))
 ;; Keywords: tools, api, data-processing
