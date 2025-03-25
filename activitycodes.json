@@ -1,0 +1,72 @@
+{
+  "PM": {
+    "code": "PM",
+    "description": "Preventative Maintenance",
+    "type_of_work": "Scheduled routine maintenance involving proactive work (e.g., lubrication, inspections, adjustments) to prevent equipment failure, logged only when no callback/shutdown (CB-*) event supersedes."
+  },
+  "TST": {
+    "code": "TST",
+    "description": "No-load device testing",
+    "type_of_work": "Periodic, annual, or Category 1 (Cat 1) testing mandated by state, jurisdiction, or code, involving no-load operational checks (e.g., fire service testing, smoke detector testing) to ensure compliance and safety, excluding tests with weights."
+  },
+  "TST-FL": {
+    "code": "TST-FL",
+    "description": "Full-load device testing",
+    "type_of_work": "Full-load testing, such as Category 5 (Cat 5), conducted with test weights to verify equipment load capacity and performance under stress, mandated by state, jurisdiction, or code."
+  },
+  "CB-EMG": {
+    "code": "CB-EMG",
+    "description": "Callback, Entrapment",
+    "type_of_work": "Emergency service request by the client for passenger entrapment in the elevator, requiring immediate response to free trapped individuals; this code supersedes all others when entrapment occurs, regardless of cause or resolution."
+  },
+  "CB-EF": {
+    "code": "CB-EF",
+    "description": "Callback, Equipment Failure",
+    "type_of_work": "Reactive service request by the client due to failure of maintainable elevator equipment (e.g., motors, doors, controls) as the root cause, requiring troubleshooting and repair to restore operation."
+  },
+  "CB-MU": {
+    "code": "CB-MU",
+    "description": "Callback, Misuse or Vandalism",
+    "type_of_work": "Service request by the client to address damage or disruption from improper or unauthorized use (misuse) or vandalism of elevator/escalator equipment, not maintainable failures (e.g., debris in track/saddle, damaged buttons, doors off track), requiring repair or cleanup."
+  },
+  "CB-ENV": {
+    "code": "CB-ENV",
+    "description": "Callback, Environmental Conditions",
+    "type_of_work": "Service request by the client to address damage or equipment failure caused by unmaintainable external environmental conditions (e.g., fire, flood, earthquake, lightning, or other acts of God), requiring assessment and repair of affected components."
+  },
+  "CB-TR": {
+    "code": "CB-TR",
+    "description": "Callback, Tenant Related",
+    "type_of_work": "A service request by the client for a situation where the tenant, patron, or guest requires assistance for non-equipment failure related services. example: retrieve personal object from pit"
+  },
+  "CB-KS": {
+    "code": "CB-KS",
+    "description": "Callback, Keyswitch",
+    "type_of_work": "Service request by the client for an inoperational elevator due to a keyswitch being activated by building staff or non-elevator personnel, shifting the equipment out of automatic service into modes such as independent, inspection, or fire service recall (e.g., logged as ‘car on independent’ or ‘car on fire recall’), requiring mode reset."
+  },
+  "CB-ROA": {
+    "code": "CB-ROA",
+    "description": "Callback, Running on Arrival",
+    "type_of_work": "Service request by the client reporting an inoperational elevator, but upon technician arrival, the equipment is found running normally with no trouble identified; no repair work performed, though monitoring may occur to verify operation."
+  },
+  "CB-SB": {
+    "code": "CB-SB",
+    "description": "Callback, Standby",
+    "type_of_work": "Service request by the client for a technician to be on-site providing standby support outside regular contract scope, for purposes such as hatch opening, event standby, or facilitating vendor access to equipment; no active repair work performed unless otherwise specified."
+  },
+  "RP": {
+    "code": "RP",
+    "description": "Repair Services",
+    "type_of_work": "Scheduled visit by a repair team for heavy repair or equipment replacement (e.g., hoist ropes, traveler cables, compensation cables, machine, bearings, gears), addressing significant wear or damage; not a callback or routine maintenance."
+  },
+  "SV": {
+    "code": "SV",
+    "description": "Site Visit",
+    "type_of_work": "Visit to the building for observation, consultation, or planning purposes (e.g., equipment survey, meeting with staff), excluding preventative maintenance (PM), callbacks (CB-*), or repair work; no physical work performed."
+  },
+  "NDE": {
+    "code": "NDE",
+    "description": "Non-Distinct Log Entry",
+    "type_of_work": "Placeholder for an event or log entry not covered by any specific code (e.g., PM, CB-*, RP, SV), recorded as unidentified and potentially resolved manually later for accurate categorization."
+  }
+}
