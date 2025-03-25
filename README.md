@@ -30,17 +30,17 @@ emacs-lisp
   :vc (:fetcher github :repo "theesfeld/cw-activity-coder")
   :commands (cw-activity-coder)
   :custom
-  (cw-activity-coder-api-key (getenv "XAI_API_KEY") "API key for xAI API")
-  (cw-activity-coder-model "grok-2-latest" "Model to use with xAI API")
-  (cw-activity-coder-batch-size 100 "Number of rows per batch")
-  (cw-activity-coder-rate-limit 2.0 "Maximum API calls per second")
-  (cw-activity-coder-max-retries 3 "Maximum retries for failed API requests")
-  (cw-activity-coder-api-timeout 300 "Timeout in seconds for API requests")
-  (cw-activity-coder-output-dir (expand-file-name "~/cw-activity-coder-output/") "Directory for output CSV files and activity codes")
-  (cw-activity-coder-activity-codes-file (expand-file-name "activitycodes.json" cw-activity-coder-output-dir) "File for persistent activity codes")
+  (cw-activity-coder-api-key (getenv "XAI_API_KEY"))
+  (cw-activity-coder-model "grok-2-latest")
+  (cw-activity-coder-batch-size 100)
+  (cw-activity-coder-rate-limit 2.0)
+  (cw-activity-coder-max-retries 3)
+  (cw-activity-coder-api-timeout 300)
+  (cw-activity-coder-output-dir (expand-file-name "~/cw-activity-coder-output/"))
+  (cw-activity-coder-activity-codes-file (expand-file-name "activitycodes.json" cw-activity-coder-output-dir))
   :init
   (unless cw-activity-coder-api-key
-    (setenv "XAI_API_KEY" "your-key-here")) ; Optional: Set within Emacs if not in env
+    (setenv "XAI_API_KEY" "your-key-here"))
   :config
   (message "CW Activity Coder loaded"))
 ```
