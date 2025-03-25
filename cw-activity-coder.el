@@ -9,8 +9,7 @@
 ;;; Commentary:
 
 ;; This package processes CSV/JSON files with the xAI API to assign CW activity codes.
-;; Features: Transient menu, live Org-mode output with error highlighting, modeline progress,
-;; Dired integration, async processing, rate limiting, and persistent activity codes.
+;; Simple, no-nonsense version: loads fully, gets API key from env, processes files, outputs results.
 
 ;;; Code:
 
@@ -25,7 +24,7 @@
   :group 'tools)
 
 (defcustom cw-activity-coder-api-key (getenv "XAI_API_KEY")
-  "API key for xAI API."
+  "API key for xAI API, fetched from XAI_API_KEY environment variable."
   :type 'string
   :group 'cw-activity-coder)
 
@@ -90,6 +89,11 @@
 
 (defvar cw-activity-coder-activity-codes nil
   "In-memory activity codes, loaded from file.")
+
+;; Verify API key at load time
+(unless cw-activity-coder-api-key
+  (error
+   "XAI_API_KEY environment variable not set. Set it with 'export XAI_API_KEY=your-key' in your shell."))
 
 (defun cw-activity-coder--generate-ref (filename index)
   "Generate a unique reference ID from FILENAME and INDEX."
@@ -288,8 +292,6 @@
 
 (defun cw-activity-coder-process-file (file callback)
   "Process FILE with xAI API asynchronously and call CALLBACK when done."
-  (unless cw-activity-coder-api-key
-    (error "XAI_API_KEY environment variable not set"))
   (cw-activity-coder--load-activity-codes)
   (unless (file-directory-p cw-activity-coder-output-dir)
     (make-directory cw-activity-coder-output-dir t))
@@ -411,7 +413,6 @@
   (when (zerop total-batches)
     (funcall callback)))
 
-;;;###autoload
 (defun cw-activity-coder-display-receipt ()
   "Display session receipt in an Org-mode buffer."
   (interactive)
@@ -458,87 +459,10 @@
            cw-activity-coder-session-stats
            :total-completion-tokens)
           total-cost)))
-      (insert "\n** Parameters\n")
-      (insert
-       (format
-        "| Parameter | Value |\n|-----------|-------|\n| Model | %s |\n| Batch Size (rows) | %d |\n| Rate Limit (calls/s) | %.1f |\n| API Timeout (s) | %d |\n| Max Retries per Batch | %d |\n| Output Directory | %s |\n"
-        cw-activity-coder-model
-        cw-activity-coder-batch-size
-        cw-activity-coder-rate-limit
-        cw-activity-coder-api-timeout
-        cw-activity-coder-max-retries
-        cw-activity-coder-output-dir))
-      (insert "\n** Response Time Statistics (s)\n")
-      (insert
-       "| File Name | Mean | Fastest | Longest | Median |\n|-----------|------|---------|---------|--------|\n")
-      (dolist (file
-               (plist-get cw-activity-coder-session-stats :files))
-        (let* ((times (plist-get file :response-times))
-               (mean
-                (if times
-                    (/ (apply #'+ times) (length times))
-                  0))
-               (fastest
-                (if times
-                    (apply #'min times)
-                  0))
-               (longest
-                (if times
-                    (apply #'max times)
-                  0))
-               (median
-                (if times
-                    (nth
-                     (/ (length times) 2)
-                     (sort (copy-sequence times) '<))
-                  0)))
-          (insert
-           (format "| %s | %.2f | %.2f | %.2f | %.2f |\n"
-                   (plist-get file :name)
-                   mean
-                   fastest
-                   longest
-                   median))))
-      (let* ((times
-              (plist-get
-               cw-activity-coder-session-stats
-               :response-times))
-             (mean
-              (if times
-                  (/ (apply #'+ times) (length times))
-                0))
-             (fastest
-              (if times
-                  (apply #'min times)
-                0))
-             (longest
-              (if times
-                  (apply #'max times)
-                0))
-             (median
-              (if times
-                  (nth
-                   (/ (length times) 2)
-                   (sort (copy-sequence times) '<))
-                0)))
-        (insert
-         (format "| Session Total | %.2f | %.2f | %.2f | %.2f |\n"
-                 mean fastest longest median)))
-      (insert "\n** Fingerprints\n")
-      (insert
-       (format "Unique fingerprints observed: %d\n"
-               (hash-table-count
-                (plist-get
-                 cw-activity-coder-session-stats
-                 :fingerprints))))
-      (maphash
-       (lambda (key _val) (insert (format "- %s\n" key)))
-       (plist-get cw-activity-coder-session-stats :fingerprints))
       (org-table-align)
       (goto-char (point-min)))
     (switch-to-buffer buffer)))
 
-;;;###autoload
 (defun cw-activity-coder-edit-codes ()
   "Edit the activity codes in a JSON buffer."
   (interactive)
@@ -570,20 +494,6 @@
   (define-key
    json-mode-map (kbd "C-c C-c") 'cw-activity-coder--save-codes))
 
-;;; Transient Menu
-
-(transient-define-prefix
- cw-activity-coder-menu () "Menu for CW Activity Coder."
- ["CW Activity Coder" [("a"
-    "Add Files from Dired"
-    cw-activity-coder-add-files-from-dired)]
-  [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
-   ("r" "Show Receipt" cw-activity-coder-display-receipt)
-   ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
-  [("c" "Clear Queue" cw-activity-coder-clear-queue)
-   ("q" "Quit" transient-quit-one)]])
-
-;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
   "Add marked files from Dired to the processing queue."
   (interactive)
@@ -598,14 +508,12 @@
                (length files)
                (string-join files ", ")))))
 
-;;;###autoload
 (defun cw-activity-coder-clear-queue ()
   "Clear the processing queue."
   (interactive)
   (setq cw-activity-coder-files-to-process nil)
   (message "Processing queue cleared"))
 
-;;;###autoload
 (defun cw-activity-coder-process-queued-files ()
   "Process all files in the queue asynchronously."
   (interactive)
@@ -622,11 +530,21 @@
              (cw-activity-coder-display-receipt)
              (message "Processed all queued files"))))))))
 
-;;;###autoload
 (defun cw-activity-coder ()
   "Start the CW Activity Coder interface."
   (interactive)
   (cw-activity-coder-menu))
+
+(transient-define-prefix
+ cw-activity-coder-menu () "Menu for CW Activity Coder."
+ ["CW Activity Coder" [("a"
+    "Add Files from Dired"
+    cw-activity-coder-add-files-from-dired)]
+  [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
+   ("r" "Show Receipt" cw-activity-coder-display-receipt)
+   ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
+  [("c" "Clear Queue" cw-activity-coder-clear-queue)
+   ("q" "Quit" transient-quit-one)]])
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
