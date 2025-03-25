@@ -4,7 +4,7 @@
 ;; Version: 0.4
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3.7") (org "9.6"))
 ;; Keywords: tools, api, data-processing
-;; URL: https://github.com/yourusername/cw-activity-coder
+;; URL: https://github.com/theesfeld/cw-activity-coder
 
 ;;; Commentary:
 
@@ -54,23 +54,26 @@
   :type 'integer
   :group 'cw-activity-coder)
 
-(defcustom cw-activity-coder-output-dir (expand-file-name "~/cw-activity-coder-output/")
+(defcustom cw-activity-coder-output-dir
+  (expand-file-name "~/cw-activity-coder-output/")
   "Directory for output CSV files and activity codes."
   :type 'directory
   :group 'cw-activity-coder)
 
-(defcustom cw-activity-coder-activity-codes-file (expand-file-name "activitycodes.json" cw-activity-coder-output-dir)
+(defcustom cw-activity-coder-activity-codes-file
+  (expand-file-name "activitycodes.json" cw-activity-coder-output-dir)
   "File for persistent activity codes."
   :type 'file
   :group 'cw-activity-coder)
 
 (defvar cw-activity-coder-session-stats
-  (list :files nil
-        :total-duration 0
-        :total-prompt-tokens 0
-        :total-completion-tokens 0
-        :fingerprints (make-hash-table :test 'equal)
-        :response-times nil)
+  (list
+   :files nil
+   :total-duration 0
+   :total-prompt-tokens 0
+   :total-completion-tokens 0
+   :fingerprints (make-hash-table :test 'equal)
+   :response-times nil)
   "Session statistics for the current run.")
 
 (defvar cw-activity-coder-files-to-process nil
@@ -110,13 +113,23 @@
     (unless (file-directory-p cw-activity-coder-output-dir)
       (make-directory cw-activity-coder-output-dir t))
     (if (file-exists-p cw-activity-coder-activity-codes-file)
-        (setq cw-activity-coder-activity-codes (cw-activity-coder--read-json-file cw-activity-coder-activity-codes-file))
-      (let ((base-file (expand-file-name "activitycodes.json" (file-name-directory (or load-file-name buffer-file-name)))))
+        (setq cw-activity-coder-activity-codes
+              (cw-activity-coder--read-json-file
+               cw-activity-coder-activity-codes-file))
+      (let ((base-file
+             (expand-file-name "activitycodes.json"
+                               (file-name-directory
+                                (or load-file-name
+                                    buffer-file-name)))))
         (if (file-exists-p base-file)
             (progn
-              (setq cw-activity-coder-activity-codes (cw-activity-coder--read-json-file base-file))
-              (cw-activity-coder--write-json-file cw-activity-coder-activity-codes-file cw-activity-coder-activity-codes))
-          (error "Base activitycodes.json not found in package directory"))))))
+              (setq cw-activity-coder-activity-codes
+                    (cw-activity-coder--read-json-file base-file))
+              (cw-activity-coder--write-json-file
+               cw-activity-coder-activity-codes-file
+               cw-activity-coder-activity-codes))
+          (error
+           "Base activitycodes.json not found in package directory"))))))
 
 (defun cw-activity-coder--read-data-file (file)
   "Read data from FILE (CSV/JSON) and return a list of records."
@@ -127,14 +140,16 @@
     (with-temp-buffer
       (insert-file-contents file)
       (let ((lines (split-string (buffer-string) "\n" t))
-            headers data)
+            headers
+            data)
         (setq headers (split-string (car lines) "," t))
         (dolist (line (cdr lines))
           (when (string-match "[^[:space:]]" line)
             (let ((values (split-string line "," t)))
               (push (cl-mapcar #'cons headers values) data))))
         (nreverse data))))
-   (t (error "Unsupported file format: %s" file))))
+   (t
+    (error "Unsupported file format: %s" file))))
 
 (defun cw-activity-coder--build-system-prompt (activity-codes)
   "Build the system prompt with ACTIVITY-CODES."
@@ -151,59 +166,102 @@
       (sleep-for (- interval elapsed)))
     (setq cw-activity-coder-last-request-time (float-time))))
 
-(defun cw-activity-coder--api-request (payload file batch-num total-batches callback)
+(defun cw-activity-coder--api-request
+    (payload file batch-num total-batches callback)
   "Send PAYLOAD to xAI API asynchronously for FILE, batch BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
          (url-request-extra-headers
           `(("Content-Type" . "application/json")
-            ("Authorization" . ,(concat "Bearer " cw-activity-coder-api-key))))
+            ("Authorization" .
+             ,(concat "Bearer " cw-activity-coder-api-key))))
          (url-request-data (json-encode payload))
          (start-time (float-time)))
-    (url-retrieve url
-                  (lambda (status &rest args)
-                    (let ((duration (- (float-time) start-time)))
-                      (if (plist-get status :error)
-                          (if (< (or (plist-get status :retry-count) 0) cw-activity-coder-max-retries)
-                              (progn
-                                (message "API request failed for %s, batch %d/%d, retrying (%d/%d)..."
-                                         file batch-num total-batches (1+ (or (plist-get status :retry-count) 0)) cw-activity-coder-max-retries)
-                                (sleep-for 1)
-                                (cw-activity-coder--api-request (plist-put payload :retry-count (1+ (or (plist-get status :retry-count) 0)))
-                                                                file batch-num total-batches callback))
-                            (error "API request failed after %d retries for %s: %s"
-                                   cw-activity-coder-max-retries file (plist-get status :error)))
-                        (goto-char (point-min))
-                        (re-search-forward "\n\n" nil t)
-                        (let* ((response (json-parse-buffer :object-type 'alist))
-                               (choices (alist-get 'choices response)))
-                          (plist-put cw-activity-coder-session-stats :total-prompt-tokens
-                                     (+ (plist-get cw-activity-coder-session-stats :total-prompt-tokens)
-                                        (or (alist-get 'prompt_tokens (alist-get 'usage response)) 0)))
-                          (plist-put cw-activity-coder-session-stats :total-completion-tokens
-                                     (+ (plist-get cw-activity-coder-session-stats :total-completion-tokens)
-                                        (or (alist-get 'completion_tokens (alist-get 'usage response)) 0)))
-                          (puthash (or (alist-get 'system_fingerprint response) "unknown")
-                                   t (plist-get cw-activity-coder-session-stats :fingerprints))
-                          (push duration (plist-get cw-activity-coder-session-stats :response-times))
-                          (funcall callback file choices duration)))))
-                  nil t cw-activity-coder-api-timeout)))
+    (url-retrieve
+     url
+     (lambda (status &rest args)
+       (let ((duration (- (float-time) start-time)))
+         (if (plist-get status :error)
+             (if (< (or (plist-get status :retry-count) 0)
+                    cw-activity-coder-max-retries)
+                 (progn
+                   (message
+                    "API request failed for %s, batch %d/%d, retrying (%d/%d)..."
+                    file
+                    batch-num
+                    total-batches
+                    (1+ (or (plist-get status :retry-count) 0))
+                    cw-activity-coder-max-retries)
+                   (sleep-for 1)
+                   (cw-activity-coder--api-request
+                    (plist-put
+                     payload
+                     :retry-count
+                     (1+ (or (plist-get status :retry-count) 0)))
+                    file batch-num total-batches callback))
+               (error
+                "API request failed after %d retries for %s: %s"
+                cw-activity-coder-max-retries
+                file
+                (plist-get status :error)))
+           (goto-char (point-min))
+           (re-search-forward "\n\n" nil t)
+           (let* ((response (json-parse-buffer :object-type 'alist))
+                  (choices (alist-get 'choices response)))
+             (plist-put
+              cw-activity-coder-session-stats
+              :total-prompt-tokens
+              (+ (plist-get
+                  cw-activity-coder-session-stats
+                  :total-prompt-tokens)
+                 (or (alist-get
+                      'prompt_tokens (alist-get 'usage response))
+                     0)))
+             (plist-put
+              cw-activity-coder-session-stats
+              :total-completion-tokens
+              (+ (plist-get
+                  cw-activity-coder-session-stats
+                  :total-completion-tokens)
+                 (or (alist-get
+                      'completion_tokens (alist-get 'usage response))
+                     0)))
+             (puthash
+              (or (alist-get 'system_fingerprint response)
+                  "unknown")
+              t
+              (plist-get
+               cw-activity-coder-session-stats
+               :fingerprints))
+             (push duration
+                   (plist-get
+                    cw-activity-coder-session-stats
+                    :response-times))
+             (funcall callback file choices duration)))))
+     nil t cw-activity-coder-api-timeout)))
 
 (defun cw-activity-coder--update-output-buffer (file results)
   "Update the output buffer with RESULTS for FILE, highlighting NDE errors."
-  (with-current-buffer (get-buffer-create cw-activity-coder-output-buffer)
+  (with-current-buffer (get-buffer-create
+                        cw-activity-coder-output-buffer)
     (unless (eq major-mode 'org-mode)
       (org-mode)
-      (insert "* CW Activity Coder Output\n** Results\n| Ref | Activity Code (cw_at) |\n|-----+---------------|\n"))
+      (insert
+       "* CW Activity Coder Output\n** Results\n| Ref | Activity Code (cw_at) |\n|-----+---------------|\n"))
     (goto-char (point-max))
     (dolist (row results)
       (let ((cw-at (alist-get 'cw_at row)))
-        (insert (format "| %s | %s%s%s |\n"
-                        (alist-get 'ref row)
-                        (if (string= cw-at "NDE") "#+BEGIN_ERROR\n" "")
-                        cw-at
-                        (if (string= cw-at "NDE") "\n#+END_ERROR" "")))))
+        (insert
+         (format "| %s | %s%s%s |\n"
+                 (alist-get 'ref row)
+                 (if (string= cw-at "NDE")
+                     "#+BEGIN_ERROR\n"
+                   "")
+                 cw-at
+                 (if (string= cw-at "NDE")
+                     "\n#+END_ERROR"
+                   "")))))
     (org-table-align)
     (org-toggle-pretty-entities)
     (when (get-buffer-window)
@@ -216,10 +274,17 @@
   (when cw-activity-coder-progress
     (let* ((current (car cw-activity-coder-progress))
            (total (cdr cw-activity-coder-progress))
-           (percent (if (zerop total) 0 (/ (* 100.0 current) total))))
+           (percent
+            (if (zerop total)
+                0
+              (/ (* 100.0 current) total))))
       (force-mode-line-update)
       (setq mode-line-format
-            (list "CW Coding: %d/%d rows (%.1f%%)" current total percent)))))
+            (list
+             "CW Coding: %d/%d rows (%.1f%%)"
+             current
+             total
+             percent)))))
 
 (defun cw-activity-coder-process-file (file callback)
   "Process FILE with xAI API asynchronously and call CALLBACK when done."
@@ -230,7 +295,9 @@
     (make-directory cw-activity-coder-output-dir t))
   (let* ((start-time (float-time))
          (data (cw-activity-coder--read-data-file file))
-         (system-prompt (cw-activity-coder--build-system-prompt cw-activity-coder-activity-codes))
+         (system-prompt
+          (cw-activity-coder--build-system-prompt
+           cw-activity-coder-activity-codes))
          (total-rows (length data))
          (batches (seq-partition data cw-activity-coder-batch-size))
          (total-batches (length batches))
@@ -242,53 +309,107 @@
     (cw-activity-coder--update-modeline)
     (dolist (batch batches)
       (let* ((batch-num (1+ (- total-batches pending-batches)))
-             (batch-data (mapcar (lambda (row) (append row (list (cons "ref" (cw-activity-coder--generate-ref file (car (last row))))))) batch))
-             (payload `((model . ,cw-activity-coder-model)
-                        (messages . (((role . "system") (content . ,system-prompt))
-                                     ((role . "user") (content . ,(format "Process this JSON data:\n%s" (json-encode batch-data))))))
-                        (response_format . ((type . "json_schema")
-                                            (json_schema . ((name . "activity_code_response")
-                                                            (strict . t)
-                                                            (schema . ((type . "array")
-                                                                       (items . ((type . "object")
-                                                                                 (properties . ((ref . ((type . "string")))
-                                                                                                (cw_at . ((type . "string")))))
-                                                                                 (required . ("ref" "cw_at")))))))))))))
-        (cw-activity-coder--api-request payload file batch-num total-batches
-                                        (lambda (f choices duration)
-                                          (dolist (choice choices)
-                                            (let ((content (json-parse-string (alist-get 'content (alist-get 'message choice)) :object-type 'alist)))
-                                              (push content results)))
-                                          (setq cw-activity-coder-progress (cons (+ (car cw-activity-coder-progress) (length batch)) total-rows))
-                                          (cw-activity-coder--update-modeline)
-                                          (cw-activity-coder--update-output-buffer file (car results))
-                                          (push duration (plist-get file-stats :response-times))
-                                          (when (zerop (cl-decf pending-batches))
-                                            (let* ((result-data (apply #'append results))
-                                                   (output-file (expand-file-name (concat (file-name-base file) "-CODED.csv") cw-activity-coder-output-dir))
-                                                   (buffer (find-file-noselect output-file)))
-                                              (with-current-buffer buffer
-                                                (erase-buffer)
-                                                (insert "ref,cw_at\n")
-                                                (dolist (row result-data)
-                                                  (insert (format "%s,%s\n" (alist-get 'ref row) (alist-get 'cw_at row))))
-                                                (save-buffer)
-                                                (kill-buffer))
-                                              (message "Saved processed data to %s" output-file)
-                                              (push (list :name file
-                                                          :rows total-rows
-                                                          :prompt-tokens (plist-get cw-activity-coder-session-stats :total-prompt-tokens)
-                                                          :completion-tokens (plist-get cw-activity-coder-session-stats :total-completion-tokens)
-                                                          :cumulative-duration (apply #'+ (plist-get file-stats :response-times))
-                                                          :wall-clock-time (- (float-time) start-time)
-                                                          :response-times (plist-get file-stats :response-times))
-                                                    (plist-get cw-activity-coder-session-stats :files))
-                                              (plist-put cw-activity-coder-session-stats :total-duration (- (float-time) start-time))
-                                              (setq cw-activity-coder-progress nil)
-                                              (force-mode-line-update)
-                                              (funcall callback))))))))
-    (when (zerop total-batches)
-      (funcall callback))))
+             (batch-data
+              (mapcar
+               (lambda (row)
+                 (append
+                  row
+                  (list
+                   (cons
+                    "ref"
+                    (cw-activity-coder--generate-ref
+                     file (car (last row)))))))
+               batch))
+             (payload
+              `((model . ,cw-activity-coder-model)
+                (messages
+                 .
+                 (((role . "system") (content . ,system-prompt))
+                  ((role . "user")
+                   (content
+                    .
+                    ,(format "Process this JSON data:\n%s"
+                             (json-encode batch-data))))))
+                (response_format
+                 .
+                 ((type . "json_schema")
+                  (json_schema
+                   .
+                   ((name . "activity_code_response")
+                    (strict . t)
+                    (schema
+                     .
+                     ((type . "array")
+                      (items
+                       .
+                       ((type . "object")
+                        (properties
+                         .
+                         ((ref . ((type . "string")))
+                          (cw_at . ((type . "string")))))
+                        (required . ("ref" "cw_at")))))))))))))
+        (cw-activity-coder--api-request
+         payload file batch-num total-batches
+         (lambda (f choices duration)
+           (dolist (choice choices)
+             (let ((content
+                    (json-parse-string (alist-get
+                                        'content
+                                        (alist-get 'message choice))
+                                       :object-type 'alist)))
+               (push content results)))
+           (setq cw-activity-coder-progress
+                 (cons
+                  (+ (car cw-activity-coder-progress)
+                     (length batch))
+                  total-rows))
+           (cw-activity-coder--update-modeline)
+           (cw-activity-coder--update-output-buffer
+            file (car results))
+           (push duration (plist-get file-stats :response-times))
+           (when (zerop (cl-decf pending-batches))
+             (let* ((result-data (apply #'append results))
+                    (output-file
+                     (expand-file-name
+                      (concat (file-name-base file) "-CODED.csv")
+                      cw-activity-coder-output-dir))
+                    (buffer (find-file-noselect output-file)))
+               (with-current-buffer buffer
+                 (erase-buffer)
+                 (insert "ref,cw_at\n")
+                 (dolist (row result-data)
+                   (insert
+                    (format "%s,%s\n"
+                            (alist-get 'ref row)
+                            (alist-get 'cw_at row))))
+                 (save-buffer)
+                 (kill-buffer))
+               (message "Saved processed data to %s" output-file)
+               (push
+                (list
+                 :name file
+                 :rows total-rows
+                 :prompt-tokens
+                 (plist-get
+                  cw-activity-coder-session-stats
+                  :total-prompt-tokens)
+                 :completion-tokens
+                 (plist-get
+                  cw-activity-coder-session-stats
+                  :total-completion-tokens)
+                 :cumulative-duration
+                 (apply #'+ (plist-get file-stats :response-times))
+                 :wall-clock-time (- (float-time) start-time)
+                 :response-times (plist-get file-stats :response-times))
+                (plist-get cw-activity-coder-session-stats :files))
+               (plist-put
+                cw-activity-coder-session-stats
+                :total-duration (- (float-time) start-time))
+               (setq cw-activity-coder-progress nil)
+               (force-mode-line-update)
+               (funcall callback))))))))
+  (when (zerop total-batches)
+    (funcall callback)))
 
 (defun cw-activity-coder-display-receipt ()
   "Display session receipt in an Org-mode buffer."
@@ -298,48 +419,119 @@
       (org-mode)
       (insert "* CW Activity Coder Receipt\n")
       (insert "** Files Processed\n")
-      (insert "| File Name | Rows | Prompt Tokens | Completion Tokens | Cumulative Duration (s) | Wall-Clock Time (s) |\n")
-      (insert "|-----------+------+---------------+-------------------+-----------------------+---------------------|\n")
-      (dolist (file (plist-get cw-activity-coder-session-stats :files))
-        (insert (format "| %s | %d | %d | %d | %.2f | %.2f |\n"
-                        (plist-get file :name)
-                        (plist-get file :rows)
-                        (plist-get file :prompt-tokens)
-                        (plist-get file :completion-tokens)
-                        (plist-get file :cumulative-duration)
-                        (plist-get file :wall-clock-time))))
+      (insert
+       "| File Name | Rows | Prompt Tokens | Completion Tokens | Cumulative Duration (s) | Wall-Clock Time (s) |\n")
+      (insert
+       "|-----------+------+---------------+-------------------+-----------------------+---------------------|\n")
+      (dolist (file
+               (plist-get cw-activity-coder-session-stats :files))
+        (insert
+         (format "| %s | %d | %d | %d | %.2f | %.2f |\n"
+                 (plist-get file :name)
+                 (plist-get file :rows)
+                 (plist-get file :prompt-tokens)
+                 (plist-get file :completion-tokens)
+                 (plist-get file :cumulative-duration)
+                 (plist-get file :wall-clock-time))))
       (insert "\n** Session Totals\n")
-      (let ((total-cost (+ (/ (* (plist-get cw-activity-coder-session-stats :total-prompt-tokens) 2) 1e6)
-                           (/ (* (plist-get cw-activity-coder-session-stats :total-completion-tokens) 10) 1e6))))
-        (insert (format "| Metric | Value |\n|--------|-------|\n| Session Wall-Clock Time (s) | %.2f |\n| Total Prompt Tokens | %d |\n| Total Completion Tokens | %d |\n| Total Cost ($) | %.4f |\n"
-                        (plist-get cw-activity-coder-session-stats :total-duration)
-                        (plist-get cw-activity-coder-session-stats :total-prompt-tokens)
-                        (plist-get cw-activity-coder-session-stats :total-completion-tokens)
-                        total-cost)))
+      (let ((total-cost
+             (+ (/ (* (plist-get
+                       cw-activity-coder-session-stats
+                       :total-prompt-tokens)
+                      2)
+                   1e6)
+                (/ (* (plist-get
+                       cw-activity-coder-session-stats
+                       :total-completion-tokens)
+                      10)
+                   1e6))))
+        (insert
+         (format
+          "| Metric | Value |\n|--------|-------|\n| Session Wall-Clock Time (s) | %.2f |\n| Total Prompt Tokens | %d |\n| Total Completion Tokens | %d |\n| Total Cost ($) | %.4f |\n"
+          (plist-get cw-activity-coder-session-stats :total-duration)
+          (plist-get
+           cw-activity-coder-session-stats
+           :total-prompt-tokens)
+          (plist-get
+           cw-activity-coder-session-stats
+           :total-completion-tokens)
+          total-cost)))
       (insert "\n** Parameters\n")
-      (insert (format "| Parameter | Value |\n|-----------|-------|\n| Model | %s |\n| Batch Size (rows) | %d |\n| Rate Limit (calls/s) | %.1f |\n| API Timeout (s) | %d |\n| Max Retries per Batch | %d |\n| Output Directory | %s |\n"
-                      cw-activity-coder-model cw-activity-coder-batch-size cw-activity-coder-rate-limit cw-activity-coder-api-timeout cw-activity-coder-max-retries cw-activity-coder-output-dir))
+      (insert
+       (format
+        "| Parameter | Value |\n|-----------|-------|\n| Model | %s |\n| Batch Size (rows) | %d |\n| Rate Limit (calls/s) | %.1f |\n| API Timeout (s) | %d |\n| Max Retries per Batch | %d |\n| Output Directory | %s |\n"
+        cw-activity-coder-model
+        cw-activity-coder-batch-size
+        cw-activity-coder-rate-limit
+        cw-activity-coder-api-timeout
+        cw-activity-coder-max-retries
+        cw-activity-coder-output-dir))
       (insert "\n** Response Time Statistics (s)\n")
-      (insert "| File Name | Mean | Fastest | Longest | Median |\n|-----------|------|---------|---------|--------|\n")
-      (dolist (file (plist-get cw-activity-coder-session-stats :files))
+      (insert
+       "| File Name | Mean | Fastest | Longest | Median |\n|-----------|------|---------|---------|--------|\n")
+      (dolist (file
+               (plist-get cw-activity-coder-session-stats :files))
         (let* ((times (plist-get file :response-times))
-               (mean (if times (/ (apply #'+ times) (length times)) 0))
-               (fastest (if times (apply #'min times) 0))
-               (longest (if times (apply #'max times) 0))
-               (median (if times (nth (/ (length times) 2) (sort (copy-sequence times) '<)) 0)))
-          (insert (format "| %s | %.2f | %.2f | %.2f | %.2f |\n"
-                          (plist-get file :name) mean fastest longest median))))
-      (let* ((times (plist-get cw-activity-coder-session-stats :response-times))
-             (mean (if times (/ (apply #'+ times) (length times)) 0))
-             (fastest (if times (apply #'min times) 0))
-             (longest (if times (apply #'max times) 0))
-             (median (if times (nth (/ (length times) 2) (sort (copy-sequence times) '<)) 0)))
-        (insert (format "| Session Total | %.2f | %.2f | %.2f | %.2f |\n" mean fastest longest median)))
+               (mean
+                (if times
+                    (/ (apply #'+ times) (length times))
+                  0))
+               (fastest
+                (if times
+                    (apply #'min times)
+                  0))
+               (longest
+                (if times
+                    (apply #'max times)
+                  0))
+               (median
+                (if times
+                    (nth
+                     (/ (length times) 2)
+                     (sort (copy-sequence times) '<))
+                  0)))
+          (insert
+           (format "| %s | %.2f | %.2f | %.2f | %.2f |\n"
+                   (plist-get file :name)
+                   mean
+                   fastest
+                   longest
+                   median))))
+      (let* ((times
+              (plist-get
+               cw-activity-coder-session-stats
+               :response-times))
+             (mean
+              (if times
+                  (/ (apply #'+ times) (length times))
+                0))
+             (fastest
+              (if times
+                  (apply #'min times)
+                0))
+             (longest
+              (if times
+                  (apply #'max times)
+                0))
+             (median
+              (if times
+                  (nth
+                   (/ (length times) 2)
+                   (sort (copy-sequence times) '<))
+                0)))
+        (insert
+         (format "| Session Total | %.2f | %.2f | %.2f | %.2f |\n"
+                 mean fastest longest median)))
       (insert "\n** Fingerprints\n")
-      (insert (format "Unique fingerprints observed: %d\n"
-                      (hash-table-count (plist-get cw-activity-coder-session-stats :fingerprints))))
-      (maphash (lambda (key _val) (insert (format "- %s\n" key)))
-               (plist-get cw-activity-coder-session-stats :fingerprints))
+      (insert
+       (format "Unique fingerprints observed: %d\n"
+               (hash-table-count
+                (plist-get
+                 cw-activity-coder-session-stats
+                 :fingerprints))))
+      (maphash
+       (lambda (key _val) (insert (format "- %s\n" key)))
+       (plist-get cw-activity-coder-session-stats :fingerprints))
       (org-table-align)
       (goto-char (point-min)))
     (switch-to-buffer buffer)))
@@ -364,25 +556,29 @@
   (when (eq (current-buffer) (get-buffer "*CW Activity Codes*"))
     (let ((new-codes (json-parse-buffer :object-type 'alist)))
       (setq cw-activity-coder-activity-codes new-codes)
-      (cw-activity-coder--write-json-file cw-activity-coder-activity-codes-file new-codes)
+      (cw-activity-coder--write-json-file
+       cw-activity-coder-activity-codes-file new-codes)
       (set-buffer-modified-p nil)
       (kill-buffer)
-      (message "Activity codes saved to %s" cw-activity-coder-activity-codes-file))))
+      (message "Activity codes saved to %s"
+               cw-activity-coder-activity-codes-file))))
 
 (with-eval-after-load 'json-mode
-  (define-key json-mode-map (kbd "C-c C-c") 'cw-activity-coder--save-codes))
+  (define-key
+   json-mode-map (kbd "C-c C-c") 'cw-activity-coder--save-codes))
 
 ;;; Transient Menu
 
-(transient-define-prefix cw-activity-coder-menu ()
-  "Menu for CW Activity Coder."
-  ["CW Activity Coder"
-   [("a" "Add Files from Dired" cw-activity-coder-add-files-from-dired)]
-   [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
-    ("r" "Show Receipt" cw-activity-coder-display-receipt)
-    ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
-   [("c" "Clear Queue" cw-activity-coder-clear-queue)
-    ("q" "Quit" transient-quit-one)]])
+(transient-define-prefix
+ cw-activity-coder-menu () "Menu for CW Activity Coder."
+ ["CW Activity Coder" [("a"
+    "Add Files from Dired"
+    cw-activity-coder-add-files-from-dired)]
+  [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
+   ("r" "Show Receipt" cw-activity-coder-display-receipt)
+   ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
+  [("c" "Clear Queue" cw-activity-coder-clear-queue)
+   ("q" "Quit" transient-quit-one)]])
 
 (defun cw-activity-coder-add-files-from-dired ()
   "Add marked files from Dired to the processing queue."
@@ -391,9 +587,12 @@
       (error "Not in Dired mode")
     (let ((files (dired-get-marked-files)))
       (dolist (file files)
-        (when (or (string-suffix-p ".csv" file) (string-suffix-p ".json" file))
+        (when (or (string-suffix-p ".csv" file)
+                  (string-suffix-p ".json" file))
           (push file cw-activity-coder-files-to-process)))
-      (message "Added %d files to queue: %s" (length files) (string-join files ", ")))))
+      (message "Added %d files to queue: %s"
+               (length files)
+               (string-join files ", ")))))
 
 (defun cw-activity-coder-clear-queue ()
   "Clear the processing queue."
@@ -410,11 +609,12 @@
           (pending (length cw-activity-coder-files-to-process)))
       (setq cw-activity-coder-files-to-process nil)
       (dolist (file files)
-        (cw-activity-coder-process-file file
-                                        (lambda ()
-                                          (when (zerop (cl-decf pending))
-                                            (cw-activity-coder-display-receipt)
-                                            (message "Processed all queued files"))))))))
+        (cw-activity-coder-process-file
+         file
+         (lambda ()
+           (when (zerop (cl-decf pending))
+             (cw-activity-coder-display-receipt)
+             (message "Processed all queued files"))))))))
 
 ;;;###autoload
 (defun cw-activity-coder ()

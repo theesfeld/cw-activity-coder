@@ -1,66 +1,120 @@
-* CW Activity Coder
+# CW Activity Coder
 
 An Emacs package to process CSV/JSON files with the xAI API, assigning CW activity codes.
 
-** Features
+## Features
+
 - Interactive Transient menu
 - Live Org-mode output with error highlighting (NDE codes)
 - Modeline progress display
 - Dired integration for file selection
 - Asynchronous API requests with rate limiting
-- Persistent, editable activity codes in =activitycodes.json=
+- Persistent, editable activity codes in ```activitycodes.json```
 - CSV output to a customizable directory
 
-** Requirements
-- Emacs 30.1+
-- Packages: =json=, =url=, =transient=, =org= (install =transient= via =M-x package-install=)
-- =XAI_API_KEY= environment variable set
+## Requirements
 
-** Installation
-1. Place =cw-activity-coder.el= and =activitycodes.json= in a directory (e.g., =~/.emacs.d/lisp/=):
-   #+BEGIN_SRC shell
-   mkdir -p ~/.emacs.d/lisp
-   mv cw-activity-coder.el activitycodes.json ~/.emacs.d/lisp/
-   #+END_SRC
-2. Use =use-package= in your =init.el= (install =use-package= if needed):
-   #+BEGIN_SRC emacs-lisp
-   (use-package cw-activity-coder
-     :load-path "~/.emacs.d/lisp/"
-     :ensure nil  ; Since it's a local file
-     :commands (cw-activity-coder)
-     :custom
-     (cw-activity-coder-output-dir "~/my-custom-output-dir/")  ; Optional customization
-     (cw-activity-coder-rate-limit 1.5)                       ; Optional: 1.5 calls/second
-     :init
-     (setenv "XAI_API_KEY" "your-key-here")                  ; Optional: Set within Emacs
-     :config
-     (message "CW Activity Coder loaded"))
-   #+END_SRC
-3. Install =transient=:
-   #+BEGIN_SRC shell
-   M-x package-install RET transient RET
-   #+END_SRC
-4. If not using =:init= to set the key, set =XAI_API_KEY= in your shell:
-   #+BEGIN_SRC shell
-   export XAI_API_KEY="your-key-here"
-   #+END_SRC
+- Emacs 30.1+ (with built-in ```use-package```)
+- Dependencies: ```json```, ```url```, ```transient```, ```org``` (listed in ```Package-Requires```)
+- ```XAI_API_KEY``` environment variable set
 
-** Usage
-1. Launch: =M-x cw-activity-coder=
+## Installation
+
+### From GitHub (Recommended)
+
+Emacs 30.1’s ```use-package``` can install this package directly from GitHub. Add this to your ```init.el```:
+
+```
+emacs-lisp
+(use-package cw-activity-coder
+  :vc (:fetcher github :repo "theesfeld/cw-activity-coder")
+  :commands (cw-activity-coder)
+  :custom
+  (cw-activity-coder-api-key (getenv "XAI_API_KEY") "API key for xAI API")
+  (cw-activity-coder-model "grok-2-latest" "Model to use with xAI API")
+  (cw-activity-coder-batch-size 100 "Number of rows per batch")
+  (cw-activity-coder-rate-limit 2.0 "Maximum API calls per second")
+  (cw-activity-coder-max-retries 3 "Maximum retries for failed API requests")
+  (cw-activity-coder-api-timeout 300 "Timeout in seconds for API requests")
+  (cw-activity-coder-output-dir (expand-file-name "~/cw-activity-coder-output/") "Directory for output CSV files and activity codes")
+  (cw-activity-coder-activity-codes-file (expand-file-name "activitycodes.json" cw-activity-coder-output-dir) "File for persistent activity codes")
+  :init
+  (unless cw-activity-coder-api-key
+    (setenv "XAI_API_KEY" "your-key-here")) ; Optional: Set within Emacs if not in env
+  :config
+  (message "CW Activity Coder loaded"))
+```
+
+#### Steps:
+
+1. **Ensure Package System is Initialized**:
+   - Emacs 30.1 includes ```package.el``` by default. Ensure your package archives are up-to-date:
+     ```
+     emacs-lisp
+     M-x package-refresh-contents RET
+     ```
+
+2. **Set ```XAI_API_KEY```**:
+   - In your shell (e.g., ```.bashrc``` or ```.zshrc```):
+     ```
+     bash
+     export XAI_API_KEY="your-key-here"
+     ```
+   - Or use the ```:init``` block to set it within Emacs.
+
+3. **Install**:
+   - Restart Emacs or evaluate the ```use-package``` block with ```C-x C-e```.
+   - ```use-package``` will clone the repository from ```https://github.com/theesfeld/cw-activity-coder.git``` and install dependencies like ```transient``` from MELPA.
+
+### Manual Installation
+
+Alternatively, clone the repo and load manually:
+
+```
+bash
+git clone https://github.com/theesfeld/cw-activity-coder.git ~/.emacs.d/lisp/cw-activity-coder
+```
+
+Add to ```init.el```:
+
+```
+emacs-lisp
+(use-package cw-activity-coder
+  :load-path "~/.emacs.d/lisp/cw-activity-coder"
+  :ensure nil
+  :commands (cw-activity-coder))
+```
+
+Install ```transient``` manually if not already present:
+
+```
+emacs-lisp
+M-x package-install RET transient RET
+```
+
+## Usage
+
+1. Launch: ```M-x cw-activity-coder```
 2. Menu options:
-   - =a=: Add files from Dired (mark with =m= in Dired first)
-   - =p=: Process queued files
-   - =r=: Show receipt
-   - =e=: Edit activity codes (save with =C-c C-c=)
-   - =c=: Clear queue
-   - =q=: Quit
-3. Monitor progress in the modeline and output in =*CW Activity Coder Output*=
-4. Results saved as CSV in =cw-activity-coder-output-dir= (default =~/cw-activity-coder-output/=)
-5. Edit codes via =e=; changes persist in =cw-activity-coder-activity-codes-file=
+   - ```a```: Add files from Dired (mark with ```m``` in Dired first)
+   - ```p```: Process queued files
+   - ```r```: Show receipt
+   - ```e```: Edit activity codes (save with ```C-c C-c```)
+   - ```c```: Clear queue
+   - ```q```: Quit
+3. Monitor progress in the modeline and output in ```*CW Activity Coder Output*```
+4. Results saved as CSV in ```cw-activity-coder-output-dir``` (default ```~/cw-activity-coder-output/```)
+5. Edit codes via ```e```; changes persist in ```cw-activity-coder-activity-codes-file```
 
-** Customization
-- =M-x customize-group RET cw-activity-coder= to adjust:
-  - =cw-activity-coder-batch-size=
-  - =cw-activity-coder-rate-limit=
-  - =cw-activity-coder-output-dir=
+## Customization
+
+- Run ```M-x customize-group RET cw-activity-coder``` to adjust:
+  - ```cw-activity-coder-batch-size```
+  - ```cw-activity-coder-rate-limit```
+  - ```cw-activity-coder-output-dir```
   - etc.
+
+## Notes
+
+- The ```Package-Requires``` header ensures ```transient``` is installed as a dependency when fetched via ```:vc```. If it’s missing, Emacs will prompt to install it from MELPA.
+- Ensure ```package-vc-refresh``` is run if you encounter issues with the initial fetch (```M-x package-vc-refresh RET cw-activity-coder RET```).
