@@ -24,10 +24,9 @@ An Emacs package to process CSV/JSON files with the xAI API, assigning CW activi
 
 Emacs 30.1’s ```use-package``` can install this package directly from GitHub. Add this to your ```init.el```:
 
-```
-emacs-lisp
+```emacs-lisp
 (use-package cw-activity-coder
-  :vc (:fetcher github :repo "theesfeld/cw-activity-coder")
+  :vc (:vc-backend Git :url "https://github.com/theesfeld/cw-activity-coder.git" :branch "main")
   :commands (cw-activity-coder)
   :custom
   (cw-activity-coder-api-key (getenv "XAI_API_KEY"))
@@ -49,15 +48,13 @@ emacs-lisp
 
 1. **Ensure Package System is Initialized**:
    - Emacs 30.1 includes ```package.el``` by default. Ensure your package archives are up-to-date:
-     ```
-     emacs-lisp
+     ```emacs-lisp
      M-x package-refresh-contents RET
      ```
 
 2. **Set ```XAI_API_KEY```**:
    - In your shell (e.g., ```.bashrc``` or ```.zshrc```):
-     ```
-     bash
+     ```bash
      export XAI_API_KEY="your-key-here"
      ```
    - Or use the ```:init``` block to set it within Emacs.
@@ -70,15 +67,13 @@ emacs-lisp
 
 Alternatively, clone the repo and load manually:
 
-```
-bash
+```bash
 git clone https://github.com/theesfeld/cw-activity-coder.git ~/.emacs.d/lisp/cw-activity-coder
 ```
 
 Add to ```init.el```:
 
-```
-emacs-lisp
+```emacs-lisp
 (use-package cw-activity-coder
   :load-path "~/.emacs.d/lisp/cw-activity-coder"
   :ensure nil
@@ -87,8 +82,7 @@ emacs-lisp
 
 Install ```transient``` manually if not already present:
 
-```
-emacs-lisp
+```emacs-lisp
 M-x package-install RET transient RET
 ```
 
