@@ -1,6 +1,6 @@
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes -*- lexical-binding: t; -*-
 
-;; Author: Your Name william@theesfeld.net
+;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3.7") (org "9.6"))
 ;; Keywords: tools, api, data-processing
@@ -411,8 +411,10 @@
   (when (zerop total-batches)
     (funcall callback)))
 
+;;;###autoload
 (defun cw-activity-coder-display-receipt ()
   "Display session receipt in an Org-mode buffer."
+  (interactive)
   (let ((buffer (get-buffer-create "*CW Activity Coder Receipt*")))
     (with-current-buffer buffer
       (erase-buffer)
@@ -536,6 +538,7 @@
       (goto-char (point-min)))
     (switch-to-buffer buffer)))
 
+;;;###autoload
 (defun cw-activity-coder-edit-codes ()
   "Edit the activity codes in a JSON buffer."
   (interactive)
@@ -580,6 +583,7 @@
   [("c" "Clear Queue" cw-activity-coder-clear-queue)
    ("q" "Quit" transient-quit-one)]])
 
+;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
   "Add marked files from Dired to the processing queue."
   (interactive)
@@ -594,12 +598,14 @@
                (length files)
                (string-join files ", ")))))
 
+;;;###autoload
 (defun cw-activity-coder-clear-queue ()
   "Clear the processing queue."
   (interactive)
   (setq cw-activity-coder-files-to-process nil)
   (message "Processing queue cleared"))
 
+;;;###autoload
 (defun cw-activity-coder-process-queued-files ()
   "Process all files in the queue asynchronously."
   (interactive)
