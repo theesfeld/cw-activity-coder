@@ -148,7 +148,7 @@
     (replace-regexp-in-string
      "[“”]" "\""
      (replace-regexp-in-string
-      "[‘’]" "'" (replace-regexp-in-string "\"" "\\\"" str)))))
+      "[‘’]" "'" (replace-regexp-in-string "\"" "\\\\\"" str)))))
 
 (defun cw-activity-coder--sanitize-data (data)
   "Sanitize all string values in DATA to ensure valid JSON."
