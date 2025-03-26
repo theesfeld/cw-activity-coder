@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.9
-;; Package-Version: 0.4.9
+;; Version: 0.5.0
+;; Package-Version: 0.5.0
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -153,10 +153,21 @@
       (let ((lines (split-string (buffer-string) "\n" t))
             headers
             data)
+        (unless lines
+          (error "Empty CSV file: %s" file))
         (setq headers (split-string (car lines) "," t))
         (dolist (line (cdr lines))
           (when (string-match "[^[:space:]]" line)
             (let ((values (split-string line "," t)))
+              ;; Pad or truncate values to match headers length
+              (when (< (length values) (length headers))
+                (setq values
+                      (append
+                       values
+                       (make-list
+                        (- (length headers) (length values)) ""))))
+              (when (> (length values) (length headers))
+                (setq values (seq-take values (length headers))))
               (push (cl-mapcar #'cons headers values) data))))
         (nreverse data))))
    (t
@@ -319,15 +330,17 @@
     (make-directory cw-activity-coder-output-dir t))
   (let* ((start-time (float-time))
          (data (cw-activity-coder--read-data-file file))
+         (total-rows (length data))
          (system-prompt
           (cw-activity-coder--build-system-prompt
            cw-activity-coder-activity-codes))
-         (total-rows (length data))
          (batches (seq-partition data cw-activity-coder-batch-size))
          (total-batches (length batches))
          (results nil)
          (file-stats (list :response-times nil))
          (pending-batches total-batches))
+    (unless (integerp total-rows)
+      (error "Invalid total-rows: %s" total-rows))
     (message "Processing %s (%d rows)..." file total-rows)
     (setq cw-activity-coder-progress (cons 0 total-rows))
     (cw-activity-coder--update-modeline)
@@ -344,7 +357,7 @@
                      (cons
                       "ref"
                       (cw-activity-coder--generate-ref
-                       file (car (last row)))))))
+                       file batch-num)))))
                  batch))
                (payload
                 `((model . ,cw-activity-coder-model)
@@ -383,6 +396,9 @@
                        (alist-get
                         'content (alist-get 'message choice))
                        :object-type 'alist)))
+                 (unless (and (stringp (alist-get 'ref content))
+                              (stringp (alist-get 'cw_at content)))
+                   (error "Invalid API response content: %s" content))
                  (push content results)))
              (setq cw-activity-coder-progress
                    (cons
