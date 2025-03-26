@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.5.1
-;; Package-Version: 0.5.1
+;; Version: 0.5.2
+;; Package-Version: 0.5.2
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -206,24 +206,31 @@
           `(("Content-Type" . "application/json")
             ("Authorization" .
              ,(concat "Bearer " cw-activity-coder-api-key))))
-         (json-string (json-encode payload))
-         ;; Convert to unibyte string to avoid multibyte issues
-         (url-request-data
-          (encode-coding-string json-string 'utf-8 t))
+         ;; Use a temp buffer to ensure unibyte output
+         (json-string
+          (with-temp-buffer
+            (set-buffer-multibyte nil) ; Force unibyte
+            (insert (json-encode payload))
+            (encode-coding-region (point-min) (point-max) 'utf-8)
+            (buffer-string)))
+         (url-request-data json-string)
          (start-time (float-time)))
     ;; Validate JSON before sending
     (condition-case err
-        (json-parse-string url-request-data :object-type 'alist)
+        (json-parse-string json-string :object-type 'alist)
       (error
        (error
         "Invalid JSON payload for batch %d/%d: %s"
         batch-num
         total-batches
         err)))
-    (message "Sending API request for batch %d/%d (size: %d bytes)..."
-             batch-num
-             total-batches
-             (length url-request-data))
+    ;; Log the payload for debugging
+    (message
+     "Sending API request for batch %d/%d (size: %d bytes): %s"
+     batch-num
+     total-batches
+     (length json-string)
+     (substring json-string 0 (min 100 (length json-string))))
     (url-retrieve
      url
      (lambda (status &rest args)
@@ -270,11 +277,17 @@
                                         :object-type 'alist)
                    (error
                     (message
-                     "Failed to parse API response for batch %d/%d: %s"
-                     batch-num-orig total-batches-orig err)
+                     "Failed to parse API response for batch %d/%d: %s\nRaw response: %s"
+                     batch-num-orig total-batches-orig err
+                     (substring response-string
+                                0
+                                (min 100 (length response-string))))
                     nil))))
              (if response
                  (let ((choices (alist-get 'choices response)))
+                   (message "Received valid response for batch %d/%d"
+                            batch-num-orig
+                            total-batches-orig)
                    (plist-put
                     cw-activity-coder-session-stats
                     :total-prompt-tokens
