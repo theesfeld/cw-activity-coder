@@ -510,12 +510,13 @@
 (defun cw-activity-coder-add-files-from-dired ()
   "Open a Dired buffer to mark and add files to the processing queue."
   (interactive)
-  (let* ((dir (expand-file-name default-directory))
-         (dired-buffer-name "*CW Activity Coder Dired*")
-         (dired-buffer (dired-noselect dir)))
-    ;; Switch to the Dired buffer
-    (switch-to-buffer dired-buffer)
+  (let*
+      ((dir (expand-file-name default-directory))
+       (dired-buffer-name "*CW Activity Coder Dired*")
+       (dired-buffer (dired dir))) ; Use dired directly to ensure mode
     (with-current-buffer dired-buffer
+      (unless (eq major-mode 'dired-mode)
+        (error "Failed to initialize Dired mode for %s" dir))
       ;; Set up a temporary minor mode for custom keybindings
       (define-minor-mode cw-activity-coder-dired-mode
         "Minor mode for CW Activity Coder Dired integration."
@@ -527,26 +528,23 @@
           (define-key map (kbd "q") #'cw-activity-coder--dired-cancel)
           map))
       (cw-activity-coder-dired-mode 1)
-      ;; Display instructions
       (message
-       "Mark files with 'm', then 'C-c C-c' to add to queue or 'q' to cancel"))
-    ;; Ensure Dired buffer is in the right mode
-    (dired-mode dir)))
+       "Mark files with 'm', then 'C-c C-c' to add to queue or 'q' to cancel"))))
 
 (defun cw-activity-coder--dired-confirm ()
   "Confirm and add marked files to the queue, then clean up."
   (interactive)
+  (unless (eq major-mode 'dired-mode)
+    (error "Not in Dired mode"))
   (let ((files (dired-get-marked-files nil nil nil t)))
     (if (null files)
         (progn
           (message "No files marked. Canceling.")
           (kill-buffer))
       (dolist (file files)
-        (when
-            (and
-             (file-regular-p file) ; Ensure it’s a file, not a directory
-             (or (string-suffix-p ".csv" file)
-                 (string-suffix-p ".json" file)))
+        (when (and (file-regular-p file)
+                   (or (string-suffix-p ".csv" file)
+                       (string-suffix-p ".json" file)))
           (push file cw-activity-coder-files-to-process)))
       (if cw-activity-coder-files-to-process
           (message "Added %d files to queue: %s"
