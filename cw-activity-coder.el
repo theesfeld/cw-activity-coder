@@ -2,15 +2,15 @@
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.1
-;; Package-Version: 0.4.1
+;; Version: 0.4.2
+;; Package-Version: 0.4.2
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
 ;;; Commentary:
 ;; This package processes CSV/JSON files with the xAI API to assign CW activity codes.
-;; Features include a Transient menu, live Org-mode output, and Dired integration.
+;; Features include a Transient menu, live Org-mode output, and simple file selection.
 ;; Requires an XAI_API_KEY environment variable. Use `M-x cw-activity-coder` to start.
 
 ;;; Code:
@@ -480,8 +480,7 @@
   (let ((buffer (get-buffer-create "*CW Activity Codes*")))
     (with-current-buffer buffer
       (erase-buffer)
-      (json-mode) ; Activate json-mode
-      ; Pretty-print the JSON with proper indentation
+      (json-mode)
       (insert (json-encode-pretty cw-activity-coder-activity-codes))
       (goto-char (point-min))
       (set-buffer-modified-p nil))
@@ -507,58 +506,23 @@
  json-mode-map (kbd "C-c C-c") #'cw-activity-coder--save-codes)
 
 ;;;###autoload
-(defun cw-activity-coder-add-files-from-dired ()
-  "Open a Dired buffer to mark and add files to the processing queue."
+(defun cw-activity-coder-add-files ()
+  "Prompt to select a file and add it to the processing queue."
   (interactive)
-  (let*
-      ((dir (expand-file-name default-directory))
-       (dired-buffer-name "*CW Activity Coder Dired*")
-       (dired-buffer (dired dir))) ; Use dired directly to ensure mode
-    (with-current-buffer dired-buffer
-      (unless (eq major-mode 'dired-mode)
-        (error "Failed to initialize Dired mode for %s" dir))
-      ;; Set up a temporary minor mode for custom keybindings
-      (define-minor-mode cw-activity-coder-dired-mode
-        "Minor mode for CW Activity Coder Dired integration."
-        :lighter " CW-Dired"
-        :keymap
-        (let ((map (make-sparse-keymap)))
-          (define-key
-           map (kbd "C-c C-c") #'cw-activity-coder--dired-confirm)
-          (define-key map (kbd "q") #'cw-activity-coder--dired-cancel)
-          map))
-      (cw-activity-coder-dired-mode 1)
-      (message
-       "Mark files with 'm', then 'C-c C-c' to add to queue or 'q' to cancel"))))
-
-(defun cw-activity-coder--dired-confirm ()
-  "Confirm and add marked files to the queue, then clean up."
-  (interactive)
-  (unless (eq major-mode 'dired-mode)
-    (error "Not in Dired mode"))
-  (let ((files (dired-get-marked-files nil nil nil t)))
-    (if (null files)
-        (progn
-          (message "No files marked. Canceling.")
-          (kill-buffer))
-      (dolist (file files)
-        (when (and (file-regular-p file)
-                   (or (string-suffix-p ".csv" file)
-                       (string-suffix-p ".json" file)))
-          (push file cw-activity-coder-files-to-process)))
-      (if cw-activity-coder-files-to-process
-          (message "Added %d files to queue: %s"
-                   (length cw-activity-coder-files-to-process)
-                   (string-join cw-activity-coder-files-to-process
-                                ", "))
-        (message "No valid CSV/JSON files marked.")))
-    (kill-buffer)))
-
-(defun cw-activity-coder--dired-cancel ()
-  "Cancel file selection and close the Dired buffer."
-  (interactive)
-  (message "Canceled file selection.")
-  (kill-buffer))
+  (let ((file
+         (read-file-name "Select a CSV or JSON file: "
+                         nil nil t nil
+                         (lambda (f)
+                           (or (string-suffix-p ".csv" f)
+                               (string-suffix-p ".json" f))))))
+    (when (and (file-regular-p file)
+               (or (string-suffix-p ".csv" file)
+                   (string-suffix-p ".json" file)))
+      (push file cw-activity-coder-files-to-process)
+      (message "Added %s to queue. Current queue: %s"
+               file
+               (string-join cw-activity-coder-files-to-process
+                            ", ")))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
@@ -595,9 +559,7 @@
 ;;;###autoload
 (transient-define-prefix
  cw-activity-coder-menu () "Menu for CW Activity Coder."
- ["CW Activity Coder" [("a"
-    "Add Files from Dired"
-    cw-activity-coder-add-files-from-dired)]
+ ["CW Activity Coder" [("a" "Add File" cw-activity-coder-add-files)]
   [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
    ("r" "Show Receipt" cw-activity-coder-display-receipt)
    ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
