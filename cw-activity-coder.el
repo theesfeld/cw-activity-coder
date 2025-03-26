@@ -1,16 +1,16 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.8
-;; Package-Version: 0.4.8
+;; Version: 0.4.9
+;; Package-Version: 0.4.9
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
 ;;; Commentary:
 ;; This package processes CSV/JSON files with the xAI API to assign CW activity
-;; codes. Features include a Transient menu with queue display, live Org-mode
-;; output, and file selection. Requires an XAI_API_KEY environment variable.
+;; codes. It includes a Transient menu with queue display, live Org-mode output,
+;; and file selection. Requires an XAI_API_KEY environment variable.
 ;; Use `M-x cw-activity-coder` to start.
 
 ;;; Code:
@@ -166,15 +166,13 @@
   "Build the system prompt with ACTIVITY-CODES for xAI API processing."
   (format
    (concat
-    "Process the provided JSON array of objects. For each object, "
-    "determine the appropriate activity code based on all its fields "
-    "and the definitions below. Return the assigned 'cw_at' code along "
-    "with the object's 'ref' field.\n\n"
-    "Rules:\n- Use 'code', 'description', and 'type_of_work' from "
-    "definitions to infer the code based on the full row data.\n"
-    "- For 'CB' prefixed situations:\n  - Use 'CB-EMG' if person(s) "
-    "trapped in elevator is indicated in any field.\n  - Otherwise, "
-    "use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
+    "Process the provided JSON array of objects. For each object, determine "
+    "the appropriate activity code based on all its fields and the definitions "
+    "below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\n"
+    "Rules:\n- Use 'code', 'description', and 'type_of_work' from definitions "
+    "to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n"
+    "  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n"
+    "  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
     "'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\n"
     "Activity Code Definitions (JSON):\n%s")
    (json-encode activity-codes)))
@@ -190,7 +188,7 @@
 
 (defun cw-activity-coder--api-request
     (payload file batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for FILE, BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
+  "Send PAYLOAD to xAI API for FILE, BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
@@ -202,8 +200,12 @@
          (start-time (float-time)))
     (url-retrieve
      url
-     (lambda (status file-orig choices duration)
-       (let ((duration (- (float-time) start-time)))
+     (lambda (status &rest args)
+       (let* ((file-orig (nth 0 args))
+              (batch-num-orig (nth 1 args))
+              (total-batches-orig (nth 2 args))
+              (callback-orig (nth 3 args))
+              (duration (- (float-time) start-time)))
          (if (plist-get status :error)
              (let ((retry-count
                     (or (plist-get status :retry-count) 0)))
@@ -211,8 +213,8 @@
                    (progn
                      (message
                       "API request failed for batch %d/%d, retrying (%d/%d)..."
-                      batch-num
-                      total-batches
+                      batch-num-orig
+                      total-batches-orig
                       (1+ retry-count)
                       cw-activity-coder-max-retries)
                      (sleep-for 1)
@@ -220,7 +222,10 @@
                       (plist-put
                        payload
                        :retry-count (1+ retry-count))
-                      file-orig batch-num total-batches callback))
+                      file-orig
+                      batch-num-orig
+                      total-batches-orig
+                      callback-orig))
                  (error
                   "API request failed after %d retries: %s"
                   cw-activity-coder-max-retries
@@ -258,7 +263,7 @@
                    (plist-get
                     cw-activity-coder-session-stats
                     :response-times))
-             (funcall callback file-orig choices duration))))
+             (funcall callback-orig file-orig choices duration))))
        (kill-buffer))
      (list file batch-num total-batches callback)
      t
@@ -386,13 +391,14 @@
                     total-rows))
              (cw-activity-coder--update-modeline)
              (cw-activity-coder--update-output-buffer
-              file (car results))
+              file-orig (car results))
              (push duration (plist-get file-stats :response-times))
              (when (zerop (cl-decf pending-batches))
                (let* ((result-data (apply #'append results))
                       (output-file
                        (expand-file-name
-                        (concat (file-name-base file) "-CODED.csv")
+                        (concat
+                         (file-name-base file-orig) "-CODED.csv")
                         cw-activity-coder-output-dir))
                       (buffer (find-file-noselect output-file)))
                  (with-current-buffer buffer
@@ -409,7 +415,7 @@
                  (message "Saved processed data to %s" output-file)
                  (push
                   (list
-                   :name file
+                   :name file-orig
                    :rows total-rows
                    :prompt-tokens
                    (plist-get
@@ -625,18 +631,14 @@
   (transient-setup 'cw-activity-coder-menu))
 
 ;;;###autoload
-(transient-define-suffix
- cw-activity-coder--queue-display
- ()
- "Display the current queue status."
- :transient t
- :description
- (lambda ()
-   (format "Current queue (%d): %s"
-           (length cw-activity-coder-files-to-process)
-           (if cw-activity-coder-files-to-process
-               (string-join cw-activity-coder-files-to-process ", ")
-             "empty"))))
+(defun cw-activity-coder--queue-display ()
+  "Display the current queue status in the Transient menu."
+  (interactive)
+  (format "Current queue (%d): %s"
+          (length cw-activity-coder-files-to-process)
+          (if cw-activity-coder-files-to-process
+              (string-join cw-activity-coder-files-to-process ", ")
+            "empty")))
 
 ;;;###autoload
 (transient-define-prefix
@@ -652,7 +654,8 @@
   ["" ; Empty group for spacing
    ("c" "Clear Queue" cw-activity-coder-clear-queue)
    ("q" "Quit" transient-quit-one)]
-  ["Queue" ("s" cw-activity-coder--queue-display)]])
+  ["Queue"
+   ("s" "Show Queue" cw-activity-coder--queue-display :transient t)]])
 
 (provide 'cw-activity-coder)
 
