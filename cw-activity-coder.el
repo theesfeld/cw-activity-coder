@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.5.3
-;; Package-Version: 0.5.3
+;; Version: 0.5.4
+;; Package-Version: 0.5.4
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -143,11 +143,12 @@
            "Base activitycodes.json not found in package directory"))))))
 
 (defun cw-activity-coder--sanitize-string (str)
-  "Sanitize STR by replacing curly quotes with straight quotes."
+  "Sanitize STR by replacing curly quotes with straight quotes and escaping quotes."
   (when (stringp str)
     (replace-regexp-in-string
-     "[‘’]" "'"
-     (replace-regexp-in-string "[“”]" "\"" str))))
+     "[“”]" "\""
+     (replace-regexp-in-string
+      "[‘’]" "'" (replace-regexp-in-string "\"" "\\\"" str)))))
 
 (defun cw-activity-coder--sanitize-data (data)
   "Sanitize all string values in DATA to ensure valid JSON."
@@ -197,17 +198,16 @@
 
 (defun cw-activity-coder--build-system-prompt (activity-codes)
   "Build the system prompt with ACTIVITY-CODES for xAI API processing."
-  (format
-   (concat
-    "Process the provided JSON array of objects. For each object, determine "
-    "the appropriate activity code based on all its fields and the definitions "
-    "below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\n"
-    "Rules:\n- Use 'code', 'description', and 'type_of_work' from definitions "
-    "to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n"
-    "  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n"
-    "  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
-    "'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\n"
-    "Activity Code Definitions (JSON):\n%s")
+  (concat
+   "Process the provided JSON array of objects. For each object, determine "
+   "the appropriate activity code based on all its fields and the definitions "
+   "below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\n"
+   "Rules:\n- Use 'code', 'description', and 'type_of_work' from definitions "
+   "to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n"
+   "  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n"
+   "  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
+   "'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\n"
+   "Activity Code Definitions (JSON):\n"
    (json-encode activity-codes)))
 
 (defun cw-activity-coder--rate-limit-wait ()
@@ -242,8 +242,8 @@
         (json-parse-string json-string :object-type 'alist)
       (error
        (message
-        "Invalid JSON payload at batch %d/%d: %s\nProblematic section: %s"
-        batch-num total-batches err
+        "Invalid JSON payload at batch %d/%d: %s\nProblematic section (pos %d): %s"
+        batch-num total-batches err 3591
         (substring json-string
                    (max 0 (- 3591 50))
                    (min (length json-string) (+ 3591 50))))
@@ -442,8 +442,9 @@
                     ((role . "user")
                      (content
                       .
-                      ,(format "Process this JSON data:\n%s"
-                               (json-encode batch-data))))))
+                      ,(concat
+                        "Process this JSON data:\n"
+                        (json-encode batch-data))))))
                   (response_format
                    .
                    ((type . "json_schema")
