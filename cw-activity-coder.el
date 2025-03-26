@@ -171,7 +171,7 @@
 
 (defun cw-activity-coder--build-system-prompt (activity-codes)
   "Build the system prompt with ACTIVITY-CODES for xAI API processing.
-Rules and definitions guide code assignment."
+  Rules and definitions guide code assignment."
   (format
    (concat
     "Process the provided JSON array of objects. For each object, "
@@ -198,7 +198,8 @@ Rules and definitions guide code assignment."
 
 (defun cw-activity-coder--api-request
     (payload _ batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
+  "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of 
+  TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
@@ -228,7 +229,7 @@ Rules and definitions guide code assignment."
                      payload
                      :retry-count
                      (1+ (or (plist-get status :retry-count) 0)))
-                    _file batch-num total-batches callback))
+                    _ batch-num total-batches callback))
                (error
                 "API request failed after %d retries: %s"
                 cw-activity-coder-max-retries
@@ -377,7 +378,7 @@ Rules and definitions guide code assignment."
                         (required . ("ref" "cw_at")))))))))))))
         (cw-activity-coder--api-request
          payload file batch-num total-batches
-         (lambda (_file choices duration)
+         (lambda (_ choices duration)
            (dolist (choice choices)
              (let ((content
                     (json-parse-string (alist-get
