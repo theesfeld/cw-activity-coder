@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.5.0
-;; Package-Version: 0.5.0
+;; Version: 0.5.1
+;; Package-Version: 0.5.1
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -159,7 +159,6 @@
         (dolist (line (cdr lines))
           (when (string-match "[^[:space:]]" line)
             (let ((values (split-string line "," t)))
-              ;; Pad or truncate values to match headers length
               (when (< (length values) (length headers))
                 (setq values
                       (append
@@ -207,8 +206,24 @@
           `(("Content-Type" . "application/json")
             ("Authorization" .
              ,(concat "Bearer " cw-activity-coder-api-key))))
-         (url-request-data (json-encode payload))
+         (json-string (json-encode payload))
+         ;; Convert to unibyte string to avoid multibyte issues
+         (url-request-data
+          (encode-coding-string json-string 'utf-8 t))
          (start-time (float-time)))
+    ;; Validate JSON before sending
+    (condition-case err
+        (json-parse-string url-request-data :object-type 'alist)
+      (error
+       (error
+        "Invalid JSON payload for batch %d/%d: %s"
+        batch-num
+        total-batches
+        err)))
+    (message "Sending API request for batch %d/%d (size: %d bytes)..."
+             batch-num
+             total-batches
+             (length url-request-data))
     (url-retrieve
      url
      (lambda (status &rest args)
@@ -223,11 +238,12 @@
                (if (< retry-count cw-activity-coder-max-retries)
                    (progn
                      (message
-                      "API request failed for batch %d/%d, retrying (%d/%d)..."
+                      "API request failed for batch %d/%d, retrying (%d/%d): %s"
                       batch-num-orig
                       total-batches-orig
                       (1+ retry-count)
-                      cw-activity-coder-max-retries)
+                      cw-activity-coder-max-retries
+                      (plist-get status :error))
                      (sleep-for 1)
                      (cw-activity-coder--api-request
                       (plist-put
@@ -238,43 +254,62 @@
                       total-batches-orig
                       callback-orig))
                  (error
-                  "API request failed after %d retries: %s"
+                  "API request failed after %d retries for batch %d/%d: %s"
                   cw-activity-coder-max-retries
+                  batch-num-orig
+                  total-batches-orig
                   (plist-get status :error))))
            (goto-char (point-min))
            (re-search-forward "\n\n" nil t)
-           (let* ((response (json-parse-buffer :object-type 'alist))
-                  (choices (alist-get 'choices response)))
-             (plist-put
-              cw-activity-coder-session-stats
-              :total-prompt-tokens
-              (+ (plist-get
-                  cw-activity-coder-session-stats
-                  :total-prompt-tokens)
-                 (or (alist-get
-                      'prompt_tokens (alist-get 'usage response))
-                     0)))
-             (plist-put
-              cw-activity-coder-session-stats
-              :total-completion-tokens
-              (+ (plist-get
-                  cw-activity-coder-session-stats
-                  :total-completion-tokens)
-                 (or (alist-get
-                      'completion_tokens (alist-get 'usage response))
-                     0)))
-             (puthash
-              (or (alist-get 'system_fingerprint response)
-                  "unknown")
-              t
-              (plist-get
-               cw-activity-coder-session-stats
-               :fingerprints))
-             (push duration
-                   (plist-get
+           (let*
+               ((response-string
+                 (buffer-substring-no-properties (point) (point-max)))
+                (response
+                 (condition-case err
+                     (json-parse-string response-string
+                                        :object-type 'alist)
+                   (error
+                    (message
+                     "Failed to parse API response for batch %d/%d: %s"
+                     batch-num-orig total-batches-orig err)
+                    nil))))
+             (if response
+                 (let ((choices (alist-get 'choices response)))
+                   (plist-put
                     cw-activity-coder-session-stats
-                    :response-times))
-             (funcall callback-orig file-orig choices duration))))
+                    :total-prompt-tokens
+                    (+ (plist-get
+                        cw-activity-coder-session-stats
+                        :total-prompt-tokens)
+                       (or (alist-get
+                            'prompt_tokens
+                            (alist-get 'usage response))
+                           0)))
+                   (plist-put
+                    cw-activity-coder-session-stats
+                    :total-completion-tokens
+                    (+ (plist-get
+                        cw-activity-coder-session-stats
+                        :total-completion-tokens)
+                       (or (alist-get
+                            'completion_tokens
+                            (alist-get 'usage response))
+                           0)))
+                   (puthash
+                    (or (alist-get 'system_fingerprint response)
+                        "unknown")
+                    t
+                    (plist-get
+                     cw-activity-coder-session-stats
+                     :fingerprints))
+                   (push duration
+                         (plist-get
+                          cw-activity-coder-session-stats
+                          :response-times))
+                   (funcall callback-orig file-orig choices duration))
+               (message "Skipping batch %d/%d due to invalid response"
+                        batch-num-orig
+                        total-batches-orig)))))
        (kill-buffer))
      (list file batch-num total-batches callback)
      t
