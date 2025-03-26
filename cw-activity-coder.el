@@ -626,35 +626,36 @@ Rules and definitions guide code assignment."
 
 (require 'transient) ; Ensure transient is loaded explicitly
 
-(transient-define-suffix cw-activity-coder--queue-display ()
-  "Display the current queue status."
-  :transient t
-  :description
-  (lambda ()
-    (format "Current queue (%d): %s"
-            (length cw-activity-coder-files-to-process)
-            (if cw-activity-coder-files-to-process
-                (string-join cw-activity-coder-files-to-process ", ")
-              "empty"))))
+;;;###autoload
+(transient-define-suffix
+ cw-activity-coder--queue-display
+ ()
+ "Display the current queue status."
+ :transient t
+ :description
+ (lambda ()
+   (format "Current queue (%d): %s"
+           (length cw-activity-coder-files-to-process)
+           (if cw-activity-coder-files-to-process
+               (string-join cw-activity-coder-files-to-process ", ")
+             "empty"))))
 
 ;;;###autoload
-(transient-define-prefix cw-activity-coder-menu ()
-  "Menu for CW Activity Coder."
-  :refresh-suffixes t
-  [["CW Activity Coder"
-    ("a" "Add File" cw-activity-coder-add-files)
-    ("m" "Modify Queue" cw-activity-coder-edit-queue)]
-   ["" ; Empty group for spacing
-    ("p" "Process Queued Files" cw-activity-coder-process-queued-files)
-    ("r" "Show Receipt" cw-activity-coder-display-receipt)
-    ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
-   ["" ; Empty group for spacing
-    ("c" "Clear Queue" cw-activity-coder-clear-queue)
-    ("q" "Quit" transient-quit-one)]
-   ["Queue"
-    ("s" "Show Queue" cw-activity-coder--queue-display)]]
-  (interactive)
-  (transient-setup 'cw-activity-coder-menu))
+(transient-define-prefix
+ cw-activity-coder-menu () "Menu for CW Activity Coder."
+ :refresh-suffixes t
+ [["CW Activity Coder"
+   ("a" "Add File" cw-activity-coder-add-files)
+   ("m" "Modify Queue" cw-activity-coder-edit-queue)]
+  ["" ; Empty group for spacing
+   ("p" "Process Queued Files" cw-activity-coder-process-queued-files)
+   ("r" "Show Receipt" cw-activity-coder-display-receipt)
+   ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
+  ["" ; Empty group for spacing
+   ("c" "Clear Queue" cw-activity-coder-clear-queue)
+   ("q" "Quit" transient-quit-one)]
+  ["Queue" ("s" "Show Queue" cw-activity-coder--queue-display)]]
+ (interactive) (transient-setup 'cw-activity-coder-menu))
 
 (provide 'cw-activity-coder)
 
