@@ -1,4 +1,5 @@
-;;; cw-activity-coder.el --- Process files with xAI API -*- lexical-binding: t; coding: utf-8 -*-
+;;; -*- lexical-binding: t; -*- cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
+
 ;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4.0
 ;; Package-Version: 0.4.0
@@ -16,7 +17,6 @@
 (require 'json)
 (require 'url)
 (require 'org)
-;; Delay 'transient' and 'dired' until needed to avoid load-time dependency issues
 
 (defgroup cw-activity-coder nil
   "Customization group for CW Activity Coder."
@@ -173,7 +173,8 @@
 
 (defun cw-activity-coder--api-request
     (payload file batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for FILE, batch BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
+  "Send PAYLOAD to xAI API asynchronously for FILE, batch BATCH-NUM
+of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
@@ -185,7 +186,7 @@
          (start-time (float-time)))
     (url-retrieve
      url
-     (lambda (status &rest args)
+     (lambda (status)
        (let ((duration (- (float-time) start-time)))
          (if (plist-get status :error)
              (if (< (or (plist-get status :retry-count) 0)
@@ -354,7 +355,7 @@
                         (required . ("ref" "cw_at")))))))))))))
         (cw-activity-coder--api-request
          payload file batch-num total-batches
-         (lambda (f choices duration)
+         (lambda (_ choices duration)
            (dolist (choice choices)
              (let ((content
                     (json-parse-string (alist-get
