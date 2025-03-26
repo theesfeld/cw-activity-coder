@@ -250,20 +250,12 @@
              ,(concat "Bearer " cw-activity-coder-api-key))))
          (json-string
           (with-temp-buffer
-            (set-buffer-multibyte nil) ; Force unibyte
+            (set-buffer-multibyte nil)
             (insert (json-encode payload))
             (encode-coding-region (point-min) (point-max) 'utf-8)
             (buffer-string)))
          (url-request-data json-string)
          (start-time (float-time)))
-    ;; Validate JSON before sending
-    (condition-case err
-        (json-parse-string json-string :object-type 'alist)
-      (error
-       (message
-        "Invalid JSON payload for batch %d/%d: %s\nPayload: %s"
-        batch-num total-batches err json-string)
-       (error "Invalid JSON payload: %s" err)))
     (message "Sending API request for batch %d/%d (size: %d bytes)"
              batch-num
              total-batches
@@ -310,8 +302,16 @@
                  (buffer-substring-no-properties (point) (point-max)))
                 (response
                  (condition-case err
-                     (json-parse-string response-string
-                                        :object-type 'alist)
+                     (progn
+                       (message
+                        "Received response for batch %d/%d: %s"
+                        batch-num-orig total-batches-orig
+                        (substring response-string
+                                   0
+                                   (min 200
+                                        (length response-string))))
+                       (json-parse-string response-string
+                                          :object-type 'alist))
                    (error
                     (message
                      "Failed to parse API response for batch %d/%d: %s\nRaw response: %s"
@@ -319,48 +319,45 @@
                      total-batches-orig
                      err
                      response-string)
-                    nil))))
-             (if response
-                 (let ((choices (alist-get 'choices response)))
-                   (message "Received valid response for batch %d/%d"
-                            batch-num-orig
-                            total-batches-orig)
-                   (plist-put
-                    cw-activity-coder-session-stats
-                    :total-prompt-tokens
-                    (+ (plist-get
-                        cw-activity-coder-session-stats
-                        :total-prompt-tokens)
-                       (or (alist-get
-                            'prompt_tokens
-                            (alist-get 'usage response))
-                           0)))
-                   (plist-put
-                    cw-activity-coder-session-stats
-                    :total-completion-tokens
-                    (+ (plist-get
-                        cw-activity-coder-session-stats
-                        :total-completion-tokens)
-                       (or (alist-get
-                            'completion_tokens
-                            (alist-get 'usage response))
-                           0)))
-                   (puthash
-                    (or (alist-get 'system_fingerprint response)
-                        "unknown")
-                    t
-                    (plist-get
-                     cw-activity-coder-session-stats
-                     :fingerprints))
-                   (push duration
-                         (plist-get
-                          cw-activity-coder-session-stats
-                          :response-times))
-                   (funcall callback-orig file-orig choices duration))
-               (message "Skipping batch %d/%d due to invalid response"
+                    (error "Response parsing failed: %s" err)))))
+             (let ((choices (alist-get 'choices response)))
+               (message "Parsed choices for batch %d/%d: %d items"
                         batch-num-orig
-                        total-batches-orig)))))
-       (kill-buffer))
+                        total-batches-orig
+                        (length choices))
+               (plist-put
+                cw-activity-coder-session-stats
+                :total-prompt-tokens
+                (+ (plist-get
+                    cw-activity-coder-session-stats
+                    :total-prompt-tokens)
+                   (or (alist-get
+                        'prompt_tokens
+                        (alist-get 'usage response))
+                       0)))
+               (plist-put
+                cw-activity-coder-session-stats
+                :total-completion-tokens
+                (+ (plist-get
+                    cw-activity-coder-session-stats
+                    :total-completion-tokens)
+                   (or (alist-get
+                        'completion_tokens
+                        (alist-get 'usage response))
+                       0)))
+               (puthash
+                (or (alist-get 'system_fingerprint response)
+                    "unknown")
+                t
+                (plist-get
+                 cw-activity-coder-session-stats
+                 :fingerprints))
+               (push duration
+                     (plist-get
+                      cw-activity-coder-session-stats
+                      :response-times))
+               (funcall callback-orig file-orig choices duration))))
+         (kill-buffer)))
      (list file batch-num total-batches callback)
      t
      cw-activity-coder-api-timeout)))
@@ -426,7 +423,10 @@
          (pending-batches total-batches))
     (unless (integerp total-rows)
       (error "Invalid total-rows: %s" total-rows))
-    (message "Processing %s (%d rows)..." file total-rows)
+    (message "Processing %s (%d rows) in %d batches..."
+             file
+             total-rows
+             total-batches)
     (setq cw-activity-coder-progress (cons 0 total-rows))
     (cw-activity-coder--update-modeline)
     (if (zerop total-batches)
@@ -466,13 +466,20 @@
                            (("ref" . (("type" . "string")))
                             ("cw_at" . (("type" . "string")))))
                           ("required" . ("ref" "cw_at")))))))))))))
-          ;; Log payload for debugging
-          (message "Generated payload for batch %d/%d: %s"
-                   batch-num total-batches
-                   (substring (json-encode payload)
-                              0
-                              (min 200
-                                   (length (json-encode payload)))))
+          ;; Validate and log payload
+          (let ((payload-json (json-encode payload)))
+            (condition-case err
+                (json-parse-string payload-json :object-type 'alist)
+              (error
+               (message
+                "Invalid JSON payload for batch %d/%d: %s\nPayload: %s"
+                batch-num total-batches err payload-json)
+               (error "Payload construction failed: %s" err)))
+            (message "Sending payload for batch %d/%d: %s"
+                     batch-num total-batches
+                     (substring payload-json
+                                0
+                                (min 200 (length payload-json)))))
           (cw-activity-coder--api-request
            payload file batch-num total-batches
            (lambda (file-orig choices duration)
