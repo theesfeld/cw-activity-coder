@@ -508,25 +508,59 @@
 
 ;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
-  "Pop up Dired and add marked files to the processing queue."
+  "Open a Dired buffer to mark and add files to the processing queue."
   (interactive)
-  (let ((dired-buffer (dired (expand-file-name default-directory))))
+  (let* ((dir (expand-file-name default-directory))
+         (dired-buffer-name "*CW Activity Coder Dired*")
+         (dired-buffer (dired-noselect dir)))
+    ;; Switch to the Dired buffer
     (switch-to-buffer dired-buffer)
-    (message "Mark files with 'm' and press 'C-c C-c' to add to queue")
-    (let ((map (make-sparse-keymap)))
-      (define-key map (kbd "C-c C-c")
-        (lambda ()
-          (interactive)
-          (let ((files (dired-get-marked-files)))
-            (dolist (file files)
-              (when (or (string-suffix-p ".csv" file)
-                        (string-suffix-p ".json" file))
-                (push file cw-activity-coder-files-to-process)))
-            (message "Added %d files to queue: %s"
-                     (length files)
-                     (string-join files ", "))
-            (kill-buffer))))
-      (use-local-map (make-composed-keymap map dired-mode-map)))))
+    (with-current-buffer dired-buffer
+      ;; Set up a temporary minor mode for custom keybindings
+      (define-minor-mode cw-activity-coder-dired-mode
+        "Minor mode for CW Activity Coder Dired integration."
+        :lighter " CW-Dired"
+        :keymap
+        (let ((map (make-sparse-keymap)))
+          (define-key
+           map (kbd "C-c C-c") #'cw-activity-coder--dired-confirm)
+          (define-key map (kbd "q") #'cw-activity-coder--dired-cancel)
+          map))
+      (cw-activity-coder-dired-mode 1)
+      ;; Display instructions
+      (message
+       "Mark files with 'm', then 'C-c C-c' to add to queue or 'q' to cancel"))
+    ;; Ensure Dired buffer is in the right mode
+    (dired-mode dir)))
+
+(defun cw-activity-coder--dired-confirm ()
+  "Confirm and add marked files to the queue, then clean up."
+  (interactive)
+  (let ((files (dired-get-marked-files nil nil nil t)))
+    (if (null files)
+        (progn
+          (message "No files marked. Canceling.")
+          (kill-buffer))
+      (dolist (file files)
+        (when
+            (and
+             (file-regular-p file) ; Ensure it’s a file, not a directory
+             (or (string-suffix-p ".csv" file)
+                 (string-suffix-p ".json" file)))
+          (push file cw-activity-coder-files-to-process)))
+      (if cw-activity-coder-files-to-process
+          (message "Added %d files to queue: %s"
+                   (length cw-activity-coder-files-to-process)
+                   (string-join cw-activity-coder-files-to-process
+                                ", "))
+        (message "No valid CSV/JSON files marked.")))
+    (kill-buffer)))
+
+(defun cw-activity-coder--dired-cancel ()
+  "Cancel file selection and close the Dired buffer."
+  (interactive)
+  (message "Canceled file selection.")
+  (kill-buffer))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
