@@ -1,9 +1,10 @@
-;;; -*- lexical-binding: t; -*- cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
+;;; -*- lexical-binding: t; -*-
+;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.0
-;; Package-Version: 0.4.0
-;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6"))
+;; Version: 0.4.1
+;; Package-Version: 0.4.1
+;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
@@ -17,6 +18,8 @@
 (require 'json)
 (require 'url)
 (require 'org)
+(require 'transient)
+(require 'json-mode) ;; Explicitly require json-mode
 
 (defgroup cw-activity-coder nil
   "Customization group for CW Activity Coder."
@@ -105,7 +108,9 @@
   "Read and parse JSON from FILE."
   (with-temp-buffer
     (insert-file-contents file)
-    (json-parse-buffer :object-type 'alist)))
+    (condition-case err
+        (json-parse-buffer :object-type 'alist)
+      (error (error "Failed to parse JSON in %s: %s" file err)))))
 
 (defun cw-activity-coder--write-json-file (file data)
   "Write DATA to FILE as JSON."
@@ -173,8 +178,7 @@
 
 (defun cw-activity-coder--api-request
     (payload file batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for FILE, batch BATCH-NUM
-of TOTAL-BATCHES, calling CALLBACK."
+  "Send PAYLOAD to xAI API asynchronously for FILE, batch BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
@@ -476,8 +480,8 @@ of TOTAL-BATCHES, calling CALLBACK."
   (let ((buffer (get-buffer-create "*CW Activity Codes*")))
     (with-current-buffer buffer
       (erase-buffer)
+      (json-mode) ;; Activate json-mode immediately
       (insert (json-encode cw-activity-coder-activity-codes))
-      (json-mode)
       (goto-char (point-min))
       (set-buffer-modified-p nil))
     (switch-to-buffer buffer)
@@ -487,18 +491,19 @@ of TOTAL-BATCHES, calling CALLBACK."
   "Save edited activity codes to file and update in-memory."
   (interactive)
   (when (eq (current-buffer) (get-buffer "*CW Activity Codes*"))
-    (let ((new-codes (json-parse-buffer :object-type 'alist)))
-      (setq cw-activity-coder-activity-codes new-codes)
-      (cw-activity-coder--write-json-file
-       cw-activity-coder-activity-codes-file new-codes)
-      (set-buffer-modified-p nil)
-      (kill-buffer)
-      (message "Activity codes saved to %s"
-               cw-activity-coder-activity-codes-file))))
+    (condition-case err
+        (let ((new-codes (json-parse-buffer :object-type 'alist)))
+          (setq cw-activity-coder-activity-codes new-codes)
+          (cw-activity-coder--write-json-file
+           cw-activity-coder-activity-codes-file new-codes)
+          (set-buffer-modified-p nil)
+          (kill-buffer)
+          (message "Activity codes saved to %s"
+                   cw-activity-coder-activity-codes-file))
+      (error (message "Failed to save activity codes: %s" err)))))
 
-(with-eval-after-load 'json-mode
-  (define-key
-   json-mode-map (kbd "C-c C-c") #'cw-activity-coder--save-codes))
+(define-key
+ json-mode-map (kbd "C-c C-c") #'cw-activity-coder--save-codes)
 
 ;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
@@ -546,7 +551,6 @@ of TOTAL-BATCHES, calling CALLBACK."
   "Start the CW Activity Coder interface."
   (interactive)
   (cw-activity-coder--ensure-api-key)
-  (require 'transient)
   (cw-activity-coder-menu))
 
 ;;;###autoload
