@@ -1,6 +1,4 @@
--*- coding: utf-8 ; -*-
-;;; -*- lexical-binding: t; -*-
-;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
+;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes -*- lexical-binding: t; -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4.7
