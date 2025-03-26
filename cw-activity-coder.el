@@ -473,15 +473,16 @@
 
 ;;;###autoload
 (defun cw-activity-coder-edit-codes ()
-  "Edit the activity codes in a JSON buffer."
+  "Edit the activity codes in a pretty-printed JSON buffer."
   (interactive)
   (cw-activity-coder--ensure-api-key)
   (cw-activity-coder--load-activity-codes)
   (let ((buffer (get-buffer-create "*CW Activity Codes*")))
     (with-current-buffer buffer
       (erase-buffer)
-      (json-mode) ;; Activate json-mode immediately
-      (insert (json-encode cw-activity-coder-activity-codes))
+      (json-mode) ; Activate json-mode
+      ; Pretty-print the JSON with proper indentation
+      (insert (json-encode-pretty cw-activity-coder-activity-codes))
       (goto-char (point-min))
       (set-buffer-modified-p nil))
     (switch-to-buffer buffer)
@@ -507,19 +508,19 @@
 
 ;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
-  "Add marked files from Dired to the processing queue."
+  "Open Dired if not already in it, then add marked files to the processing queue."
   (interactive)
   (require 'dired)
-  (if (not (derived-mode-p 'dired-mode))
-      (error "Not in Dired mode")
-    (let ((files (dired-get-marked-files)))
-      (dolist (file files)
-        (when (or (string-suffix-p ".csv" file)
-                  (string-suffix-p ".json" file))
-          (push file cw-activity-coder-files-to-process)))
-      (message "Added %d files to queue: %s"
-               (length files)
-               (string-join files ", ")))))
+  (unless (derived-mode-p 'dired-mode)
+    (dired default-directory)) ; Open Dired in current directory if not already in Dired
+  (let ((files (dired-get-marked-files)))
+    (dolist (file files)
+      (when (or (string-suffix-p ".csv" file)
+                (string-suffix-p ".json" file))
+        (push file cw-activity-coder-files-to-process)))
+    (message "Added %d files to queue: %s"
+             (length files)
+             (string-join files ", "))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
