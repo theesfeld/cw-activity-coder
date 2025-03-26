@@ -511,16 +511,28 @@
   "Open Dired if not already in it, then add marked files to the processing queue."
   (interactive)
   (require 'dired)
-  (unless (derived-mode-p 'dired-mode)
-    (dired default-directory)) ; Open Dired in current directory if not already in Dired
-  (let ((files (dired-get-marked-files)))
-    (dolist (file files)
-      (when (or (string-suffix-p ".csv" file)
-                (string-suffix-p ".json" file))
-        (push file cw-activity-coder-files-to-process)))
-    (message "Added %d files to queue: %s"
-             (length files)
-             (string-join files ", "))))
+  (if (derived-mode-p 'dired-mode)
+      ;; If already in Dired, process marked files immediately
+      (let ((files (dired-get-marked-files)))
+        (dolist (file files)
+          (when (or (string-suffix-p ".csv" file)
+                    (string-suffix-p ".json" file))
+            (push file cw-activity-coder-files-to-process)))
+        (message "Added %d files to queue: %s"
+                 (length files)
+                 (string-join files ", ")))
+    ;; If not in Dired, open it and set up a post-command hook
+    (progn
+      (dired default-directory)
+      (message
+       "Mark files in Dired and press 'a' again to add them to queue")
+      ;; Optional: Add a one-time hook to remind user what to do
+      (add-hook 'dired-mode-hook
+                (lambda ()
+                  (message
+                   "Mark files and press 'a' again to add them")
+                  (remove-hook 'dired-mode-hook t))
+                nil t))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
