@@ -131,10 +131,13 @@
           (while (re-search-forward "[^[:ascii:]]" nil t)
             (replace-match "")) ; Strip non-ASCII
           (setq cw-activity-coder-activity-codes
-                (cw-activity-coder--sanitize-data (json-parse-buffer :object-type 'alist))))
-      (let ((base-file (expand-file-name "activitycodes.json"
-                                         (file-name-directory
-                                          (or load-file-name buffer-file-name)))))
+                (cw-activity-coder--sanitize-data
+                 (json-parse-buffer :object-type 'alist))))
+      (let ((base-file
+             (expand-file-name "activitycodes.json"
+                               (file-name-directory
+                                (or load-file-name
+                                    buffer-file-name)))))
         (if (file-exists-p base-file)
             (progn
               (with-temp-buffer
@@ -144,21 +147,27 @@
                 (while (re-search-forward "[^[:ascii:]]" nil t)
                   (replace-match ""))
                 (setq cw-activity-coder-activity-codes
-                      (cw-activity-coder--sanitize-data (json-parse-buffer :object-type 'alist))))
+                      (cw-activity-coder--sanitize-data
+                       (json-parse-buffer :object-type 'alist))))
               (cw-activity-coder--write-json-file
                cw-activity-coder-activity-codes-file
                cw-activity-coder-activity-codes))
-          (error "Base activitycodes.json not found in package directory"))))))
+          (error
+           "Base activitycodes.json not found in package directory"))))))
 
 (defun cw-activity-coder--sanitize-string (str)
-  "Sanitize STR by replacing curly quotes and control chars with safe alternatives."
+  "Sanitize STR by replacing curly quotes, control chars, and other problematic characters."
   (when (stringp str)
     (replace-regexp-in-string
-     "[[:cntrl:]]" ""
+     "[[:cntrl:]\r\n]"
+     "" ; Remove control chars, carriage returns, and newlines
      (replace-regexp-in-string
-      "[“”]" "\""
+      "[“”]" "\"" ; Replace curly double quotes
       (replace-regexp-in-string
-       "[‘’]" "'" (replace-regexp-in-string "\"" "\\\\\"" str))))))
+       "[‘’]" "'" ; Replace curly single quotes
+       (replace-regexp-in-string
+        "[\\][\\]" "\\\\" ; Escape backslashes properly
+        (replace-regexp-in-string "\"" "\\\"" str))))))) ; Escape double quotes
 
 (defun cw-activity-coder--sanitize-data (data)
   "Sanitize all string values in DATA to ensure valid JSON."
@@ -187,18 +196,18 @@
             data)
         (unless lines
           (error "Empty CSV file: %s" file))
-        (setq headers (split-string (car lines) "," t))
+        (setq headers (split-string (car lines) "," t "[ \t]*")) ; Trim whitespace
         (dolist (line (cdr lines))
-          (when (string-match "[^[:space:]]" line)
+          (when (string-match "[^[:space:]]" line) ; Skip empty lines
             (let ((values (split-string line "," t)))
-              (when (< (length values) (length headers))
-                (setq values
-                      (append
-                       values
-                       (make-list
-                        (- (length headers) (length values)) ""))))
-              (when (> (length values) (length headers))
-                (setq values (seq-take values (length headers))))
+              ;; Pad or truncate values to match headers
+              (setq values
+                    (if (< (length values) (length headers))
+                        (append
+                         values
+                         (make-list
+                          (- (length headers) (length values)) ""))
+                      (seq-take values (length headers))))
               (push (cw-activity-coder--sanitize-data
                      (cl-mapcar #'cons headers values))
                     data))))
@@ -252,22 +261,13 @@
         (json-parse-string json-string :object-type 'alist)
       (error
        (message
-        "Invalid JSON payload at batch %d/%d: %s\nProblematic section (pos %d): %s"
-        batch-num total-batches err 3591
-        (substring json-string
-                   (max 0 (- 3591 50))
-                   (min (length json-string) (+ 3591 50))))
-       (error
-        "Invalid JSON payload for batch %d/%d: %s"
-        batch-num
-        total-batches
-        err)))
-    (message
-     "Sending API request for batch %d/%d (size: %d bytes): %s"
-     batch-num
-     total-batches
-     (length json-string)
-     (substring json-string 0 (min 100 (length json-string))))
+        "Invalid JSON payload for batch %d/%d: %s\nPayload: %s"
+        batch-num total-batches err json-string)
+       (error "Invalid JSON payload: %s" err)))
+    (message "Sending API request for batch %d/%d (size: %d bytes)"
+             batch-num
+             total-batches
+             (length json-string))
     (url-retrieve
      url
      (lambda (status &rest args)
@@ -315,10 +315,10 @@
                    (error
                     (message
                      "Failed to parse API response for batch %d/%d: %s\nRaw response: %s"
-                     batch-num-orig total-batches-orig err
-                     (substring response-string
-                                0
-                                (min 100 (length response-string))))
+                     batch-num-orig
+                     total-batches-orig
+                     err
+                     response-string)
                     nil))))
              (if response
                  (let ((choices (alist-get 'choices response)))
@@ -445,34 +445,34 @@
                        file batch-num)))))
                  batch))
                (payload
-                `((model . ,cw-activity-coder-model)
-                  (messages
-                   .
-                   (((role . "system") (content . ,system-prompt))
-                    ((role . "user")
-                     (content
-                      .
+                `(("model" . ,cw-activity-coder-model)
+                  ("messages" .
+                   ((("role" . "system") ("content" . ,system-prompt))
+                    (("role" . "user")
+                     ("content" .
                       ,(concat
                         "Process this JSON data:\n"
                         (json-encode batch-data))))))
-                  (response_format
-                   .
-                   ((type . "json_schema")
-                    (json_schema
-                     .
-                     ((name . "activity_code_response")
-                      (strict . t)
-                      (schema
-                       .
-                       ((type . "array")
-                        (items
-                         .
-                         ((type . "object")
-                          (properties
-                           .
-                           ((ref . ((type . "string")))
-                            (cw_at . ((type . "string")))))
-                          (required . ("ref" "cw_at")))))))))))))
+                  ("response_format" .
+                   (("type" . "json_schema")
+                    ("json_schema" .
+                     (("name" . "activity_code_response")
+                      ("strict" . t)
+                      ("schema" .
+                       (("type" . "array")
+                        ("items" .
+                         (("type" . "object")
+                          ("properties" .
+                           (("ref" . (("type" . "string")))
+                            ("cw_at" . (("type" . "string")))))
+                          ("required" . ("ref" "cw_at")))))))))))))
+          ;; Log payload for debugging
+          (message "Generated payload for batch %d/%d: %s"
+                   batch-num total-batches
+                   (substring (json-encode payload)
+                              0
+                              (min 200
+                                   (length (json-encode payload)))))
           (cw-activity-coder--api-request
            payload file batch-num total-batches
            (lambda (file-orig choices duration)
