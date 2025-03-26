@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.5.2
-;; Package-Version: 0.5.2
+;; Version: 0.5.3
+;; Package-Version: 0.5.3
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -142,8 +142,29 @@
           (error
            "Base activitycodes.json not found in package directory"))))))
 
+(defun cw-activity-coder--sanitize-string (str)
+  "Sanitize STR by replacing curly quotes with straight quotes."
+  (when (stringp str)
+    (replace-regexp-in-string
+     "[‘’]" "'"
+     (replace-regexp-in-string "[“”]" "\"" str))))
+
+(defun cw-activity-coder--sanitize-data (data)
+  "Sanitize all string values in DATA to ensure valid JSON."
+  (cond
+   ((stringp data)
+    (cw-activity-coder--sanitize-string data))
+   ((consp data)
+    (mapcar
+     (lambda (pair)
+       (cons
+        (car pair) (cw-activity-coder--sanitize-data (cdr pair))))
+     data))
+   (t
+    data)))
+
 (defun cw-activity-coder--read-data-file (file)
-  "Read data from FILE (CSV/JSON) and return a list of records."
+  "Read data from FILE (CSV/JSON) and return a list of sanitized records."
   (cond
    ((string-suffix-p ".json" file)
     (cw-activity-coder--read-json-file file))
@@ -167,7 +188,9 @@
                         (- (length headers) (length values)) ""))))
               (when (> (length values) (length headers))
                 (setq values (seq-take values (length headers))))
-              (push (cl-mapcar #'cons headers values) data))))
+              (push (cw-activity-coder--sanitize-data
+                     (cl-mapcar #'cons headers values))
+                    data))))
         (nreverse data))))
    (t
     (error "Unsupported file format: %s" file))))
@@ -206,7 +229,6 @@
           `(("Content-Type" . "application/json")
             ("Authorization" .
              ,(concat "Bearer " cw-activity-coder-api-key))))
-         ;; Use a temp buffer to ensure unibyte output
          (json-string
           (with-temp-buffer
             (set-buffer-multibyte nil) ; Force unibyte
@@ -219,12 +241,17 @@
     (condition-case err
         (json-parse-string json-string :object-type 'alist)
       (error
+       (message
+        "Invalid JSON payload at batch %d/%d: %s\nProblematic section: %s"
+        batch-num total-batches err
+        (substring json-string
+                   (max 0 (- 3591 50))
+                   (min (length json-string) (+ 3591 50))))
        (error
         "Invalid JSON payload for batch %d/%d: %s"
         batch-num
         total-batches
         err)))
-    ;; Log the payload for debugging
     (message
      "Sending API request for batch %d/%d (size: %d bytes): %s"
      batch-num
