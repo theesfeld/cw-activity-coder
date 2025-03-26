@@ -1,4 +1,5 @@
-;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; -*-
+;;; -*- lexical-binding: t -*-
+;;; cw-activity-coder.el --- Assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4.7
@@ -195,8 +196,8 @@
     (setq cw-activity-coder-last-request-time (float-time))))
 
 (defun cw-activity-coder--api-request
-    (payload _ batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of 
+    (payload file batch-num total-batches callback)
+  "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of
   TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
@@ -376,7 +377,7 @@
                         (required . ("ref" "cw_at")))))))))))))
         (cw-activity-coder--api-request
          payload file batch-num total-batches
-         (lambda (_ choices duration)
+         (lambda (file choices duration)
            (dolist (choice choices)
              (let ((content
                     (json-parse-string (alist-get
