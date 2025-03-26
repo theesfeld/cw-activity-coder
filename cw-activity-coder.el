@@ -508,32 +508,25 @@
 
 ;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
-  "Open Dired and allow adding marked files to the processing queue."
+  "Pop up Dired and add marked files to the processing queue."
   (interactive)
-  (require 'dired)
-  (let ((dired-buffer
-         (if (derived-mode-p 'dired-mode)
-             (current-buffer)
-           (dired-noselect default-directory))))
-    (with-current-buffer dired-buffer
-      (switch-to-buffer dired-buffer)
-      (message
-       "Mark files with 'm' and press 'C-c C-c' to add to queue")
-      (let ((map (make-sparse-keymap)))
-        (define-key
-         map (kbd "C-c C-c")
-         (lambda ()
-           (interactive)
-           (let ((files (dired-get-marked-files)))
-             (dolist (file files)
-               (when (or (string-suffix-p ".csv" file)
-                         (string-suffix-p ".json" file))
-                 (push file cw-activity-coder-files-to-process)))
-             (message "Added %d files to queue: %s"
-                      (length files)
-                      (string-join files ", "))
-             (kill-buffer dired-buffer))))
-        (use-local-map (make-composed-keymap map dired-mode-map))))))
+  (let ((dired-buffer (dired (expand-file-name default-directory))))
+    (switch-to-buffer dired-buffer)
+    (message "Mark files with 'm' and press 'C-c C-c' to add to queue")
+    (let ((map (make-sparse-keymap)))
+      (define-key map (kbd "C-c C-c")
+        (lambda ()
+          (interactive)
+          (let ((files (dired-get-marked-files)))
+            (dolist (file files)
+              (when (or (string-suffix-p ".csv" file)
+                        (string-suffix-p ".json" file))
+                (push file cw-activity-coder-files-to-process)))
+            (message "Added %d files to queue: %s"
+                     (length files)
+                     (string-join files ", "))
+            (kill-buffer))))
+      (use-local-map (make-composed-keymap map dired-mode-map)))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
