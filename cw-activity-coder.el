@@ -119,14 +119,15 @@
       (insert (json-encode data)))))
 
 (defun cw-activity-coder--load-activity-codes ()
-  "Load activity codes from file or initialize with base if missing."
+  "Load activity codes from file or initialize with base if missing, sanitizing data."
   (unless cw-activity-coder-activity-codes
     (unless (file-directory-p cw-activity-coder-output-dir)
       (make-directory cw-activity-coder-output-dir t))
     (if (file-exists-p cw-activity-coder-activity-codes-file)
         (setq cw-activity-coder-activity-codes
-              (cw-activity-coder--read-json-file
-               cw-activity-coder-activity-codes-file))
+              (cw-activity-coder--sanitize-data
+               (cw-activity-coder--read-json-file
+                cw-activity-coder-activity-codes-file)))
       (let ((base-file
              (expand-file-name "activitycodes.json"
                                (file-name-directory
@@ -135,7 +136,8 @@
         (if (file-exists-p base-file)
             (progn
               (setq cw-activity-coder-activity-codes
-                    (cw-activity-coder--read-json-file base-file))
+                    (cw-activity-coder--sanitize-data
+                     (cw-activity-coder--read-json-file base-file)))
               (cw-activity-coder--write-json-file
                cw-activity-coder-activity-codes-file
                cw-activity-coder-activity-codes))
@@ -143,12 +145,14 @@
            "Base activitycodes.json not found in package directory"))))))
 
 (defun cw-activity-coder--sanitize-string (str)
-  "Sanitize STR by replacing curly quotes with straight quotes and escaping quotes."
+  "Sanitize STR by replacing curly quotes and control chars with safe alternatives."
   (when (stringp str)
     (replace-regexp-in-string
-     "[“”]" "\""
+     "[[:cntrl:]]" ""
      (replace-regexp-in-string
-      "[‘’]" "'" (replace-regexp-in-string "\"" "\\\\\"" str)))))
+      "[“”]" "\""
+      (replace-regexp-in-string
+       "[‘’]" "'" (replace-regexp-in-string "\"" "\\\\\"" str))))))
 
 (defun cw-activity-coder--sanitize-data (data)
   "Sanitize all string values in DATA to ensure valid JSON."
