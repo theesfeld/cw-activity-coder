@@ -2,16 +2,17 @@
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.2
-;; Package-Version: 0.4.2
+;; Version: 0.4.3
+;; Package-Version: 0.4.3
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
 ;;; Commentary:
-;; This package processes CSV/JSON files with the xAI API to assign CW activity codes.
-;; Features include a Transient menu, live Org-mode output, and simple file selection.
-;; Requires an XAI_API_KEY environment variable. Use `M-x cw-activity-coder` to start.
+;; This package processes CSV/JSON files with the xAI API to assign CW activity
+;; codes. Features include a Transient menu with queue display, live Org-mode
+;; output, and file selection. Requires an XAI_API_KEY environment variable.
+;; Use `M-x cw-activity-coder` to start.
 
 ;;; Code:
 
@@ -19,7 +20,7 @@
 (require 'url)
 (require 'org)
 (require 'transient)
-(require 'json-mode) ;; Explicitly require json-mode
+(require 'json-mode)
 
 (defgroup cw-activity-coder nil
   "Customization group for CW Activity Coder."
@@ -190,7 +191,7 @@
          (start-time (float-time)))
     (url-retrieve
      url
-     (lambda (status)
+     (lambda (status &rest _args) ; Explicitly ignore unused args
        (let ((duration (- (float-time) start-time)))
          (if (plist-get status :error)
              (if (< (or (plist-get status :retry-count) 0)
@@ -359,7 +360,8 @@
                         (required . ("ref" "cw_at")))))))))))))
         (cw-activity-coder--api-request
          payload file batch-num total-batches
-         (lambda (_ choices duration)
+         (lambda
+           (_file choices duration) ; _file to avoid unused warning
            (dolist (choice choices)
              (let ((content
                     (json-parse-string (alist-get
@@ -481,7 +483,7 @@
     (with-current-buffer buffer
       (erase-buffer)
       (json-mode)
-      (insert (json-encode-pretty cw-activity-coder-activity-codes))
+      (insert (json-encode cw-activity-coder-activity-codes)) ; Use json-encode
       (goto-char (point-min))
       (set-buffer-modified-p nil))
     (switch-to-buffer buffer)
@@ -500,6 +502,7 @@
           (kill-buffer)
           (message "Activity codes saved to %s"
                    cw-activity-coder-activity-codes-file))
+      Inclusive
       (error (message "Failed to save activity codes: %s" err)))))
 
 (define-key
@@ -519,17 +522,74 @@
                (or (string-suffix-p ".csv" file)
                    (string-suffix-p ".json" file)))
       (push file cw-activity-coder-files-to-process)
-      (message "Added %s to queue. Current queue: %s"
+      (message "Added %s to queue. Current queue (%d): %s"
                file
-               (string-join cw-activity-coder-files-to-process
-                            ", ")))))
+               (length cw-activity-coder-files-to-process)
+               (string-join cw-activity-coder-files-to-process ", "))
+      (transient-setup 'cw-activity-coder-menu))))
+
+;;;###autoload
+(defun cw-activity-coder-edit-queue ()
+  "Edit the processing queue in a temporary buffer."
+  (interactive)
+  (if (null cw-activity-coder-files-to-process)
+      (message "Queue is empty—nothing to edit.")
+    (let ((buffer (get-buffer-create "*CW Activity Queue*")))
+      (with-current-buffer buffer
+        (erase-buffer)
+        (insert
+         "# Edit the queue below. Delete lines to remove files.\n")
+        (insert
+         "# Save with C-c C-c when done, or C-c C-k to cancel.\n\n")
+        (dolist (file cw-activity-coder-files-to-process)
+          (insert (format "%s\n" file)))
+        (text-mode)
+        (goto-char (point-min))
+        (set-buffer-modified-p nil)
+        (local-set-key
+         (kbd "C-c C-c") #'cw-activity-coder--save-queue)
+        (local-set-key
+         (kbd "C-c C-k") #'cw-activity-coder--cancel-queue-edit))
+      (switch-to-buffer buffer)
+      (message
+       "Delete lines to remove files. Save with C-c C-c, cancel with C-c C-k"))))
+
+(defun cw-activity-coder--save-queue ()
+  "Save the edited queue and update the in-memory list."
+  (interactive)
+  (when (eq (current-buffer) (get-buffer "*CW Activity Queue*"))
+    (let ((new-queue
+           (split-string (buffer-string) "\n" t "[ \t\n#]+")))
+      (setq cw-activity-coder-files-to-process
+            (seq-filter
+             (lambda (f)
+               (and (file-exists-p f)
+                    (file-regular-p f)
+                    (or (string-suffix-p ".csv" f)
+                        (string-suffix-p ".json" f))))
+             new-queue))
+      (kill-buffer)
+      (message "Queue updated (%d files): %s"
+               (length cw-activity-coder-files-to-process)
+               (string-join cw-activity-coder-files-to-process ", "))
+      (transient-setup 'cw-activity-coder-menu))))
+
+(defun cw-activity-coder--cancel-queue-edit ()
+  "Cancel queue editing without saving changes."
+  (interactive)
+  (when (eq (current-buffer) (get-buffer "*CW Activity Queue*"))
+    (kill-buffer)
+    (message "Queue edit canceled. Queue unchanged (%d files): %s"
+             (length cw-activity-coder-files-to-process)
+             (string-join cw-activity-coder-files-to-process ", "))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
   "Clear the processing queue."
   (interactive)
   (setq cw-activity-coder-files-to-process nil)
-  (message "Processing queue cleared"))
+  (message "Processing queue cleared")
+  (transient-setup 'cw-activity-coder-menu))
 
 ;;;###autoload
 (defun cw-activity-coder-process-queued-files ()
@@ -559,12 +619,21 @@
 ;;;###autoload
 (transient-define-prefix
  cw-activity-coder-menu () "Menu for CW Activity Coder."
- ["CW Activity Coder" [("a" "Add File" cw-activity-coder-add-files)]
+ :refresh-suffixes t
+ ["CW Activity Coder" [("a" "Add File" cw-activity-coder-add-files)
+   ("m" "Modify Queue" cw-activity-coder-edit-queue)]
   [("p" "Process Queued Files" cw-activity-coder-process-queued-files)
    ("r" "Show Receipt" cw-activity-coder-display-receipt)
    ("e" "Edit Activity Codes" cw-activity-coder-edit-codes)]
   [("c" "Clear Queue" cw-activity-coder-clear-queue)
-   ("q" "Quit" transient-quit-one)]])
+   ("q" "Quit" transient-quit-one)]
+  ["Queue" (lambda ()
+     (format "Current queue (%d): %s"
+             (length cw-activity-coder-files-to-process)
+             (if cw-activity-coder-files-to-process
+                 (string-join cw-activity-coder-files-to-process ", ")
+               "empty")))]]
+ (interactive) (transient-setup 'cw-activity-coder-menu))
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
