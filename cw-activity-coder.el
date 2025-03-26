@@ -1,16 +1,9 @@
-;;; -*- lexical-binding: t -*-
-;;; cw-activity-coder.el --- Assign CW activity codes
+;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.7
-;; Package-Version: 0.4.7
-;; Package-Requires:
-;;   ((emacs "30.1")
-;;    (json "1.4")
-;;    (url "1.0")
-;;    (transient "0.3")
-;;    (org "9.6")
-;;    (json-mode "1.8.3"))
+;; Version: 0.4.8
+;; Package-Version: 0.4.8
+;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
@@ -122,7 +115,8 @@
 (defun cw-activity-coder--write-json-file (file data)
   "Write DATA to FILE as JSON."
   (with-temp-file file
-    (insert (json-encode data))))
+    (let ((coding-system-for-write 'utf-8))
+      (insert (json-encode data)))))
 
 (defun cw-activity-coder--load-activity-codes ()
   "Load activity codes from file or initialize with base if missing."
@@ -169,8 +163,7 @@
     (error "Unsupported file format: %s" file))))
 
 (defun cw-activity-coder--build-system-prompt (activity-codes)
-  "Build the system prompt with ACTIVITY-CODES for xAI API processing.
-  Rules and definitions guide code assignment."
+  "Build the system prompt with ACTIVITY-CODES for xAI API processing."
   (format
    (concat
     "Process the provided JSON array of objects. For each object, "
@@ -197,8 +190,7 @@
 
 (defun cw-activity-coder--api-request
     (payload file batch-num total-batches callback)
-  "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of
-  TOTAL-BATCHES, calling CALLBACK."
+  "Send PAYLOAD to xAI API asynchronously for FILE, BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
          (url-request-method "POST")
@@ -210,29 +202,29 @@
          (start-time (float-time)))
     (url-retrieve
      url
-     (lambda (status &rest _args)
+     (lambda (status file-orig choices duration)
        (let ((duration (- (float-time) start-time)))
          (if (plist-get status :error)
-             (if (< (or (plist-get status :retry-count) 0)
-                    cw-activity-coder-max-retries)
-                 (progn
-                   (message
-                    "API request failed for batch %d/%d, retrying (%d/%d)..."
-                    batch-num
-                    total-batches
-                    (1+ (or (plist-get status :retry-count) 0))
-                    cw-activity-coder-max-retries)
-                   (sleep-for 1)
-                   (cw-activity-coder--api-request
-                    (plist-put
-                     payload
-                     :retry-count
-                     (1+ (or (plist-get status :retry-count) 0)))
-                    _ batch-num total-batches callback))
-               (error
-                "API request failed after %d retries: %s"
-                cw-activity-coder-max-retries
-                (plist-get status :error)))
+             (let ((retry-count
+                    (or (plist-get status :retry-count) 0)))
+               (if (< retry-count cw-activity-coder-max-retries)
+                   (progn
+                     (message
+                      "API request failed for batch %d/%d, retrying (%d/%d)..."
+                      batch-num
+                      total-batches
+                      (1+ retry-count)
+                      cw-activity-coder-max-retries)
+                     (sleep-for 1)
+                     (cw-activity-coder--api-request
+                      (plist-put
+                       payload
+                       :retry-count (1+ retry-count))
+                      file-orig batch-num total-batches callback))
+                 (error
+                  "API request failed after %d retries: %s"
+                  cw-activity-coder-max-retries
+                  (plist-get status :error))))
            (goto-char (point-min))
            (re-search-forward "\n\n" nil t)
            (let* ((response (json-parse-buffer :object-type 'alist))
@@ -266,8 +258,11 @@
                    (plist-get
                     cw-activity-coder-session-stats
                     :response-times))
-             (funcall callback _file choices duration)))))
-     nil t cw-activity-coder-api-timeout)))
+             (funcall callback file-orig choices duration))))
+       (kill-buffer))
+     (list file batch-num total-batches callback)
+     t
+     cw-activity-coder-api-timeout)))
 
 (defun cw-activity-coder--update-output-buffer (file results)
   "Update the output buffer with RESULTS for FILE, highlighting NDE errors."
@@ -306,13 +301,10 @@
             (if (zerop total)
                 0
               (/ (* 100.0 current) total))))
-      (force-mode-line-update)
       (setq mode-line-format
             (list
-             "CW Coding: %d/%d rows (%.1f%%)"
-             current
-             total
-             percent)))))
+             "CW Coding: %d/%d rows (%.1f%%)" current total percent))
+      (force-mode-line-update))))
 
 (defun cw-activity-coder-process-file (file callback)
   "Process FILE with xAI API asynchronously and call CALLBACK when done."
@@ -334,109 +326,110 @@
     (message "Processing %s (%d rows)..." file total-rows)
     (setq cw-activity-coder-progress (cons 0 total-rows))
     (cw-activity-coder--update-modeline)
-    (dolist (batch batches)
-      (let* ((batch-num (1+ (- total-batches pending-batches)))
-             (batch-data
-              (mapcar
-               (lambda (row)
-                 (append
-                  row
-                  (list
-                   (cons
-                    "ref"
-                    (cw-activity-coder--generate-ref
-                     file (car (last row)))))))
-               batch))
-             (payload
-              `((model . ,cw-activity-coder-model)
-                (messages
-                 .
-                 (((role . "system") (content . ,system-prompt))
-                  ((role . "user")
-                   (content
-                    .
-                    ,(format "Process this JSON data:\n%s"
-                             (json-encode batch-data))))))
-                (response_format
-                 .
-                 ((type . "json_schema")
-                  (json_schema
+    (if (zerop total-batches)
+        (funcall callback)
+      (dolist (batch batches)
+        (let* ((batch-num (1+ (- total-batches pending-batches)))
+               (batch-data
+                (mapcar
+                 (lambda (row)
+                   (append
+                    row
+                    (list
+                     (cons
+                      "ref"
+                      (cw-activity-coder--generate-ref
+                       file (car (last row)))))))
+                 batch))
+               (payload
+                `((model . ,cw-activity-coder-model)
+                  (messages
                    .
-                   ((name . "activity_code_response")
-                    (strict . t)
-                    (schema
+                   (((role . "system") (content . ,system-prompt))
+                    ((role . "user")
+                     (content
+                      .
+                      ,(format "Process this JSON data:\n%s"
+                               (json-encode batch-data))))))
+                  (response_format
+                   .
+                   ((type . "json_schema")
+                    (json_schema
                      .
-                     ((type . "array")
-                      (items
+                     ((name . "activity_code_response")
+                      (strict . t)
+                      (schema
                        .
-                       ((type . "object")
-                        (properties
+                       ((type . "array")
+                        (items
                          .
-                         ((ref . ((type . "string")))
-                          (cw_at . ((type . "string")))))
-                        (required . ("ref" "cw_at")))))))))))))
-        (cw-activity-coder--api-request
-         payload file batch-num total-batches
-         (lambda (file choices duration)
-           (dolist (choice choices)
-             (let ((content
-                    (json-parse-string (alist-get
-                                        'content
-                                        (alist-get 'message choice))
-                                       :object-type 'alist)))
-               (push content results)))
-           (setq cw-activity-coder-progress
-                 (cons
-                  (+ (car cw-activity-coder-progress)
-                     (length batch))
-                  total-rows))
-           (cw-activity-coder--update-modeline)
-           (cw-activity-coder--update-output-buffer
-            file (car results))
-           (push duration (plist-get file-stats :response-times))
-           (when (zerop (cl-decf pending-batches))
-             (let* ((result-data (apply #'append results))
-                    (output-file
-                     (expand-file-name
-                      (concat (file-name-base file) "-CODED.csv")
-                      cw-activity-coder-output-dir))
-                    (buffer (find-file-noselect output-file)))
-               (with-current-buffer buffer
-                 (erase-buffer)
-                 (insert "ref,cw_at\n")
-                 (dolist (row result-data)
-                   (insert
-                    (format "%s,%s\n"
-                            (alist-get 'ref row)
-                            (alist-get 'cw_at row))))
-                 (save-buffer)
-                 (kill-buffer))
-               (message "Saved processed data to %s" output-file)
-               (push
-                (list
-                 :name file
-                 :rows total-rows
-                 :prompt-tokens
-                 (plist-get
+                         ((type . "object")
+                          (properties
+                           .
+                           ((ref . ((type . "string")))
+                            (cw_at . ((type . "string")))))
+                          (required . ("ref" "cw_at")))))))))))))
+          (cw-activity-coder--api-request
+           payload file batch-num total-batches
+           (lambda (file-orig choices duration)
+             (dolist (choice choices)
+               (let ((content
+                      (json-parse-string
+                       (alist-get
+                        'content (alist-get 'message choice))
+                       :object-type 'alist)))
+                 (push content results)))
+             (setq cw-activity-coder-progress
+                   (cons
+                    (+ (car cw-activity-coder-progress)
+                       (length batch))
+                    total-rows))
+             (cw-activity-coder--update-modeline)
+             (cw-activity-coder--update-output-buffer
+              file (car results))
+             (push duration (plist-get file-stats :response-times))
+             (when (zerop (cl-decf pending-batches))
+               (let* ((result-data (apply #'append results))
+                      (output-file
+                       (expand-file-name
+                        (concat (file-name-base file) "-CODED.csv")
+                        cw-activity-coder-output-dir))
+                      (buffer (find-file-noselect output-file)))
+                 (with-current-buffer buffer
+                   (erase-buffer)
+                   (let ((coding-system-for-write 'utf-8))
+                     (insert "ref,cw_at\n")
+                     (dolist (row result-data)
+                       (insert
+                        (format "%s,%s\n"
+                                (alist-get 'ref row)
+                                (alist-get 'cw_at row))))
+                     (save-buffer))
+                   (kill-buffer))
+                 (message "Saved processed data to %s" output-file)
+                 (push
+                  (list
+                   :name file
+                   :rows total-rows
+                   :prompt-tokens
+                   (plist-get
+                    cw-activity-coder-session-stats
+                    :total-prompt-tokens)
+                   :completion-tokens
+                   (plist-get
+                    cw-activity-coder-session-stats
+                    :total-completion-tokens)
+                   :cumulative-duration
+                   (apply #'+ (plist-get file-stats :response-times))
+                   :wall-clock-time (- (float-time) start-time)
+                   :response-times (plist-get file-stats :response-times))
+                  (plist-get cw-activity-coder-session-stats :files))
+                 (plist-put
                   cw-activity-coder-session-stats
-                  :total-prompt-tokens)
-                 :completion-tokens
-                 (plist-get
-                  cw-activity-coder-session-stats
-                  :total-completion-tokens)
-                 :cumulative-duration
-                 (apply #'+ (plist-get file-stats :response-times))
-                 :wall-clock-time (- (float-time) start-time)
-                 :response-times (plist-get file-stats :response-times))
-                (plist-get cw-activity-coder-session-stats :files))
-               (plist-put
-                cw-activity-coder-session-stats
-                :total-duration (- (float-time) start-time))
-               (setq cw-activity-coder-progress nil)
-               (force-mode-line-update)
-               (funcall callback)))))))
-    (when (zerop total-batches)
-      (funcall callback))))
+                  :total-duration (- (float-time) start-time))
+                 (setq cw-activity-coder-progress nil)
+                 (force-mode-line-update)
+                 (funcall callback))))))))))
 
 ;;;###autoload
 (defun cw-activity-coder-display-receipt ()
@@ -629,9 +622,7 @@
   "Start the CW Activity Coder interface."
   (interactive)
   (cw-activity-coder--ensure-api-key)
-  (cw-activity-coder-menu))
-
-;;(require 'transient) ; Ensure transient is loaded explicitly
+  (transient-setup 'cw-activity-coder-menu))
 
 ;;;###autoload
 (transient-define-suffix
@@ -661,8 +652,7 @@
   ["" ; Empty group for spacing
    ("c" "Clear Queue" cw-activity-coder-clear-queue)
    ("q" "Quit" transient-quit-one)]
-  ["Queue" ("s" "Show Queue" cw-activity-coder--queue-display)]]
- (interactive) (transient-setup 'cw-activity-coder-menu))
+  ["Queue" ("s" cw-activity-coder--queue-display)]])
 
 (provide 'cw-activity-coder)
 
