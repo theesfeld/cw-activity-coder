@@ -508,31 +508,32 @@
 
 ;;;###autoload
 (defun cw-activity-coder-add-files-from-dired ()
-  "Open Dired if not already in it, then add marked files to the processing queue."
+  "Open Dired and allow adding marked files to the processing queue."
   (interactive)
   (require 'dired)
-  (if (derived-mode-p 'dired-mode)
-      ;; If already in Dired, process marked files immediately
-      (let ((files (dired-get-marked-files)))
-        (dolist (file files)
-          (when (or (string-suffix-p ".csv" file)
-                    (string-suffix-p ".json" file))
-            (push file cw-activity-coder-files-to-process)))
-        (message "Added %d files to queue: %s"
-                 (length files)
-                 (string-join files ", ")))
-    ;; If not in Dired, open it and set up a post-command hook
-    (progn
-      (dired default-directory)
+  (let ((dired-buffer
+         (if (derived-mode-p 'dired-mode)
+             (current-buffer)
+           (dired-noselect default-directory))))
+    (with-current-buffer dired-buffer
+      (switch-to-buffer dired-buffer)
       (message
-       "Mark files in Dired and press 'a' again to add them to queue")
-      ;; Optional: Add a one-time hook to remind user what to do
-      (add-hook 'dired-mode-hook
-                (lambda ()
-                  (message
-                   "Mark files and press 'a' again to add them")
-                  (remove-hook 'dired-mode-hook t))
-                nil t))))
+       "Mark files with 'm' and press 'C-c C-c' to add to queue")
+      (let ((map (make-sparse-keymap)))
+        (define-key
+         map (kbd "C-c C-c")
+         (lambda ()
+           (interactive)
+           (let ((files (dired-get-marked-files)))
+             (dolist (file files)
+               (when (or (string-suffix-p ".csv" file)
+                         (string-suffix-p ".json" file))
+                 (push file cw-activity-coder-files-to-process)))
+             (message "Added %d files to queue: %s"
+                      (length files)
+                      (string-join files ", "))
+             (kill-buffer dired-buffer))))
+        (use-local-map (make-composed-keymap map dired-mode-map))))))
 
 ;;;###autoload
 (defun cw-activity-coder-clear-queue ()
