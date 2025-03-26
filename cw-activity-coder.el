@@ -1,10 +1,19 @@
+-*-
+coding:
+utf-8 ; -*-
 ;;; -*- lexical-binding: t; -*-
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4.4
-;; Package-Version: 0.4.4
-;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
+;; Package-Version: 0.4.7
+;; Package-Requires:
+;;   ((emacs "30.1")
+;;    (json "1.4")
+;;    (url "1.0")
+;;    (transient "0.3")
+;;    (org "9.6")
+;;    (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
 
@@ -190,7 +199,7 @@ Rules and definitions guide code assignment."
     (setq cw-activity-coder-last-request-time (float-time))))
 
 (defun cw-activity-coder--api-request
-    (payload _file batch-num total-batches callback)
+    (payload _ batch-num total-batches callback)
   "Send PAYLOAD to xAI API asynchronously for batch BATCH-NUM of TOTAL-BATCHES, calling CALLBACK."
   (cw-activity-coder--rate-limit-wait)
   (let* ((url "https://api.x.ai/v1/chat/completions")
