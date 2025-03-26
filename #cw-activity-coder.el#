@@ -1,8 +1,8 @@
 ;;; cw-activity-coder.el --- Assign CW activity codes -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.5.4
-;; Package-Version: 0.5.4
+;; Version: 0.5.1
+;; Package-Version: 0.5.1
 ;; Package-Requires: ((emacs "30.1") (json "1.4") (url "1.0") (transient "0.3") (org "9.6") (json-mode "1.8.3"))
 ;; Keywords: tools, api, data-processing
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -119,63 +119,31 @@
       (insert (json-encode data)))))
 
 (defun cw-activity-coder--load-activity-codes ()
-  "Load activity codes from file or initialize with base if missing, ensuring ASCII."
+  "Load activity codes from file or initialize with base if missing."
   (unless cw-activity-coder-activity-codes
     (unless (file-directory-p cw-activity-coder-output-dir)
       (make-directory cw-activity-coder-output-dir t))
     (if (file-exists-p cw-activity-coder-activity-codes-file)
-        (with-temp-buffer
-          (insert-file-contents cw-activity-coder-activity-codes-file)
-          (set-buffer-multibyte nil) ; Treat as unibyte
-          (goto-char (point-min))
-          (while (re-search-forward "[^[:ascii:]]" nil t)
-            (replace-match "")) ; Strip non-ASCII
-          (setq cw-activity-coder-activity-codes
-                (cw-activity-coder--sanitize-data (json-parse-buffer :object-type 'alist))))
-      (let ((base-file (expand-file-name "activitycodes.json"
-                                         (file-name-directory
-                                          (or load-file-name buffer-file-name)))))
+        (setq cw-activity-coder-activity-codes
+              (cw-activity-coder--read-json-file
+               cw-activity-coder-activity-codes-file))
+      (let ((base-file
+             (expand-file-name "activitycodes.json"
+                               (file-name-directory
+                                (or load-file-name
+                                    buffer-file-name)))))
         (if (file-exists-p base-file)
             (progn
-              (with-temp-buffer
-                (insert-file-contents base-file)
-                (set-buffer-multibyte nil)
-                (goto-char (point-min))
-                (while (re-search-forward "[^[:ascii:]]" nil t)
-                  (replace-match ""))
-                (setq cw-activity-coder-activity-codes
-                      (cw-activity-coder--sanitize-data (json-parse-buffer :object-type 'alist))))
+              (setq cw-activity-coder-activity-codes
+                    (cw-activity-coder--read-json-file base-file))
               (cw-activity-coder--write-json-file
                cw-activity-coder-activity-codes-file
                cw-activity-coder-activity-codes))
-          (error "Base activitycodes.json not found in package directory"))))))
-
-(defun cw-activity-coder--sanitize-string (str)
-  "Sanitize STR by replacing curly quotes and control chars with safe alternatives."
-  (when (stringp str)
-    (replace-regexp-in-string
-     "[[:cntrl:]]" ""
-     (replace-regexp-in-string
-      "[“”]" "\""
-      (replace-regexp-in-string
-       "[‘’]" "'" (replace-regexp-in-string "\"" "\\\\\"" str))))))
-
-(defun cw-activity-coder--sanitize-data (data)
-  "Sanitize all string values in DATA to ensure valid JSON."
-  (cond
-   ((stringp data)
-    (cw-activity-coder--sanitize-string data))
-   ((consp data)
-    (mapcar
-     (lambda (pair)
-       (cons
-        (car pair) (cw-activity-coder--sanitize-data (cdr pair))))
-     data))
-   (t
-    data)))
+          (error
+           "Base activitycodes.json not found in package directory"))))))
 
 (defun cw-activity-coder--read-data-file (file)
-  "Read data from FILE (CSV/JSON) and return a list of sanitized records."
+  "Read data from FILE (CSV/JSON) and return a list of records."
   (cond
    ((string-suffix-p ".json" file)
     (cw-activity-coder--read-json-file file))
@@ -199,25 +167,24 @@
                         (- (length headers) (length values)) ""))))
               (when (> (length values) (length headers))
                 (setq values (seq-take values (length headers))))
-              (push (cw-activity-coder--sanitize-data
-                     (cl-mapcar #'cons headers values))
-                    data))))
+              (push (cl-mapcar #'cons headers values) data))))
         (nreverse data))))
    (t
     (error "Unsupported file format: %s" file))))
 
 (defun cw-activity-coder--build-system-prompt (activity-codes)
   "Build the system prompt with ACTIVITY-CODES for xAI API processing."
-  (concat
-   "Process the provided JSON array of objects. For each object, determine "
-   "the appropriate activity code based on all its fields and the definitions "
-   "below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\n"
-   "Rules:\n- Use 'code', 'description', and 'type_of_work' from definitions "
-   "to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n"
-   "  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n"
-   "  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
-   "'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\n"
-   "Activity Code Definitions (JSON):\n"
+  (format
+   (concat
+    "Process the provided JSON array of objects. For each object, determine "
+    "the appropriate activity code based on all its fields and the definitions "
+    "below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\n"
+    "Rules:\n- Use 'code', 'description', and 'type_of_work' from definitions "
+    "to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n"
+    "  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n"
+    "  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to "
+    "'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\n"
+    "Activity Code Definitions (JSON):\n%s")
    (json-encode activity-codes)))
 
 (defun cw-activity-coder--rate-limit-wait ()
@@ -239,35 +206,24 @@
           `(("Content-Type" . "application/json")
             ("Authorization" .
              ,(concat "Bearer " cw-activity-coder-api-key))))
-         (json-string
-          (with-temp-buffer
-            (set-buffer-multibyte nil) ; Force unibyte
-            (insert (json-encode payload))
-            (encode-coding-region (point-min) (point-max) 'utf-8)
-            (buffer-string)))
-         (url-request-data json-string)
+         (json-string (json-encode payload))
+         ;; Convert to unibyte string to avoid multibyte issues
+         (url-request-data
+          (encode-coding-string json-string 'utf-8 t))
          (start-time (float-time)))
     ;; Validate JSON before sending
     (condition-case err
-        (json-parse-string json-string :object-type 'alist)
+        (json-parse-string url-request-data :object-type 'alist)
       (error
-       (message
-        "Invalid JSON payload at batch %d/%d: %s\nProblematic section (pos %d): %s"
-        batch-num total-batches err 3591
-        (substring json-string
-                   (max 0 (- 3591 50))
-                   (min (length json-string) (+ 3591 50))))
        (error
         "Invalid JSON payload for batch %d/%d: %s"
         batch-num
         total-batches
         err)))
-    (message
-     "Sending API request for batch %d/%d (size: %d bytes): %s"
-     batch-num
-     total-batches
-     (length json-string)
-     (substring json-string 0 (min 100 (length json-string))))
+    (message "Sending API request for batch %d/%d (size: %d bytes)..."
+             batch-num
+             total-batches
+             (length url-request-data))
     (url-retrieve
      url
      (lambda (status &rest args)
@@ -314,17 +270,11 @@
                                         :object-type 'alist)
                    (error
                     (message
-                     "Failed to parse API response for batch %d/%d: %s\nRaw response: %s"
-                     batch-num-orig total-batches-orig err
-                     (substring response-string
-                                0
-                                (min 100 (length response-string))))
+                     "Failed to parse API response for batch %d/%d: %s"
+                     batch-num-orig total-batches-orig err)
                     nil))))
              (if response
                  (let ((choices (alist-get 'choices response)))
-                   (message "Received valid response for batch %d/%d"
-                            batch-num-orig
-                            total-batches-orig)
                    (plist-put
                     cw-activity-coder-session-stats
                     :total-prompt-tokens
@@ -452,9 +402,8 @@
                     ((role . "user")
                      (content
                       .
-                      ,(concat
-                        "Process this JSON data:\n"
-                        (json-encode batch-data))))))
+                      ,(format "Process this JSON data:\n%s"
+                               (json-encode batch-data))))))
                   (response_format
                    .
                    ((type . "json_schema")

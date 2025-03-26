@@ -42,7 +42,7 @@
   "CB-KS": {
     "code": "CB-KS",
     "description": "Callback, Keyswitch",
-    "type_of_work": "Service request by the client for an inoperational elevator due to a keyswitch being activated by building staff or non-elevator personnel, shifting the equipment out of automatic service into modes such as independent, inspection, or fire service recall (e.g., logged as ‘car on independent’ or ‘car on fire recall’), requiring mode reset."
+    "type_of_work": "Service request by the client for an inoperational elevator due to a keyswitch being activated by building staff or non-elevator personnel, shifting the equipment out of automatic service into modes such as independent, inspection, or fire service recall (e.g., logged as 'car on independent' or 'car on fire recall'), requiring mode reset."
   },
   "CB-ROA": {
     "code": "CB-ROA",
