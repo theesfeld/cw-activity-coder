@@ -5,8 +5,8 @@ utf-8 ; -*-
 ;;; cw-activity-coder.el --- Process files with xAI API to assign CW activity codes
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 0.4.7
-;; Package-Version: 0.4.7
+;; Version: 0.4.4
+;; Package-Version: 0.4.7qqfeqwfvsdv
 ;; Package-Requires:
 ;;   ((emacs "30.1")
 ;;    (json "1.4")
@@ -633,7 +633,7 @@ Rules and definitions guide code assignment."
   (cw-activity-coder--ensure-api-key)
   (cw-activity-coder-menu))
 
-;;(require 'transient) ; Ensure transient is loaded explicitly
+(require 'transient) ; Ensure transient is loaded explicitly
 
 ;;;###autoload
 (transient-define-suffix
