@@ -1,4 +1,3 @@
-lexical-binding: t; -*-
 ;;; cw-activity-coder.el --- Process files with xAI API -*- lexical-binding: t; coding: utf-8 -*-
 ;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 0.4.0
