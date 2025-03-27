@@ -50,29 +50,40 @@
   "xAI model to use for coding."
   :type 'string)
 
-(defconst cw-activity-coder--package-dir
+(defun cw-activity-coder--get-package-dir ()
+  "Determine the package directory reliably."
   (let ((lib-path (locate-library "cw-activity-coder")))
     (cond
      (lib-path
       (file-name-directory lib-path))
      (load-file-name
       (file-name-directory load-file-name))
+     ((and (boundp 'package-user-dir)
+           (file-exists-p package-user-dir))
+      (expand-file-name "cw-activity-coder" package-user-dir))
      (t
       (error
-       "Cannot determine package directory for cw-activity-coder; ensure it's in load-path"))))
-  "Directory containing the package files.")
+       "Cannot find cw-activity-coder package directory; check load-path or package installation")))))
+
+(defvar cw-activity-coder--package-dir nil
+  "Cached package directory.")
 
 (defconst cw-activity-coder-activity-codes
-  (let ((json-file
-         (expand-file-name "activitycodes.json"
-                           cw-activity-coder--package-dir)))
-    (unless (file-exists-p json-file)
-      (error
-       "activitycodes.json not found in package directory: %s"
-       cw-activity-coder--package-dir))
-    (with-temp-buffer
-      (insert-file-contents json-file)
-      (json-parse-buffer)))
+  (progn
+    (setq cw-activity-coder--package-dir
+          (cw-activity-coder--get-package-dir))
+    (message "DEBUG: Package dir set to %s"
+             cw-activity-coder--package-dir)
+    (let ((json-file
+           (expand-file-name "activitycodes.json"
+                             cw-activity-coder--package-dir)))
+      (unless (file-exists-p json-file)
+        (error
+         "activitycodes.json not found in package directory: %s"
+         cw-activity-coder--package-dir))
+      (with-temp-buffer
+        (insert-file-contents json-file)
+        (json-parse-buffer))))
   "Activity codes JSON object loaded from activitycodes.json.")
 
 (defvar cw-activity-coder--session-stats
