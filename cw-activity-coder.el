@@ -54,22 +54,33 @@
   "Determine the package directory reliably."
   (let ((lib-path (locate-library "cw-activity-coder")))
     (cond
-     (lib-path (file-name-directory lib-path))
-     (load-file-name (file-name-directory load-file-name))
-     ((and (boundp 'package-user-dir) (file-exists-p package-user-dir))
+     (lib-path
+      (file-name-directory lib-path))
+     (load-file-name
+      (file-name-directory load-file-name))
+     ((and (boundp 'package-user-dir)
+           (file-exists-p package-user-dir))
       (expand-file-name "cw-activity-coder" package-user-dir))
-     (t (error "Cannot find cw-activity-coder package directory; check load-path or package installation")))))
+     (t
+      (error
+       "Cannot find cw-activity-coder package directory; check load-path or package installation")))))
 
 (defvar cw-activity-coder--package-dir nil
   "Cached package directory.")
 
 (defconst cw-activity-coder-activity-codes
   (progn
-    (setq cw-activity-coder--package-dir (cw-activity-coder--get-package-dir))
-    (message "DEBUG: Package dir set to %s" cw-activity-coder--package-dir)
-    (let ((json-file (expand-file-name "activitycodes.json" cw-activity-coder--package-dir)))
+    (setq cw-activity-coder--package-dir
+          (cw-activity-coder--get-package-dir))
+    (message "DEBUG: Package dir set to %s"
+             cw-activity-coder--package-dir)
+    (let ((json-file
+           (expand-file-name "activitycodes.json"
+                             cw-activity-coder--package-dir)))
       (unless (file-exists-p json-file)
-        (error "activitycodes.json not found in package directory: %s" cw-activity-coder--package-dir))
+        (error
+         "activitycodes.json not found in package directory: %s"
+         cw-activity-coder--package-dir))
       (with-temp-buffer
         (insert-file-contents json-file)
         (json-parse-buffer))))
@@ -112,7 +123,9 @@
 
 (defun cw-activity-coder--parse-csv-line ()
   "Parse current line as CSV, returning list of fields."
-  (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
+  (let ((line
+         (buffer-substring-no-properties
+          (line-beginning-position) (line-end-position)))
         (fields '())
         (current "")
         (in-quotes nil))
@@ -142,14 +155,19 @@
         (when (not (eobp))
           (let* ((fields (cw-activity-coder--parse-csv-line))
                  (row (cl-mapcar #'cons header fields))
-                 (ref (cw-activity-coder--generate-ref (line-number-at-pos))))
+                 (ref
+                  (cw-activity-coder--generate-ref
+                   (line-number-at-pos))))
             (push (append row (list (cons "ref" ref))) rows))))
       (nreverse rows))))
 
 (defun cw-activity-coder--api-request (batch retry-count callback)
   "Send a batch to the xAI API with RETRY-COUNT retries, calling CALLBACK."
-  (let* ((api-key (or (getenv cw-activity-coder-api-key-env-var)
-                      (error "API key not set in %s" cw-activity-coder-api-key-env-var)))
+  (let* ((api-key
+          (or (getenv cw-activity-coder-api-key-env-var)
+              (error
+               "API key not set in %s"
+               cw-activity-coder-api-key-env-var)))
          (payload
           `((model . ,cw-activity-coder-model)
             (messages
@@ -179,37 +197,56 @@
                      ((ref . ((type . "string")))
                       (cw_at . ((type . "string")))))
                     (required . ["ref" "cw_at"]))))))))))))
-    (while (>= cw-activity-coder--active-requests cw-activity-coder-rate-limit)
+    (while (>= cw-activity-coder--active-requests
+               cw-activity-coder-rate-limit)
       (sleep-for 0.1))
     (cl-incf cw-activity-coder--active-requests)
     (request
      "https://api.x.ai/v1/chat/completions"
      :type "POST"
-     :headers `(("Authorization" . ,(concat "Bearer " api-key))
-                ("Content-Type" . "application/json"))
+     :headers
+     `(("Authorization" . ,(concat "Bearer " api-key))
+       ("Content-Type" . "application/json"))
      :data (json-encode payload)
      :timeout cw-activity-coder-api-timeout
      :parser 'json-read
      :success
      (cl-function
       (lambda (&key data &allow-other-keys)
-        (let* ((content (alist-get 'content (alist-get 'message (aref (alist-get 'choices data) 0))))
+        (let* ((content
+                (alist-get
+                 'content
+                 (alist-get
+                  'message (aref (alist-get 'choices data) 0))))
                (raw-result (json-parse-string content))
-               (result (mapcar (lambda (item)
-                                 (let ((ht (if (hash-table-p item) item
-                                             (error "Unexpected item type: %s" item))))
-                                   (list (cons "ref" (gethash "ref" ht))
-                                         (cons "cw_at" (gethash "cw_at" ht)))))
-                               (if (vectorp raw-result) (append raw-result nil) raw-result)))
+               (result
+                (mapcar
+                 (lambda (item)
+                   (let ((ht
+                          (if (hash-table-p item)
+                              item
+                            (error "Unexpected item type: %s" item))))
+                     (list
+                      (cons "ref" (gethash "ref" ht))
+                      (cons "cw_at" (gethash "cw_at" ht)))))
+                 (if (vectorp raw-result)
+                     (append raw-result nil)
+                   raw-result)))
                (usage (alist-get 'usage data)))
-          (push (alist-get 'system_fingerprint data "unknown")
-                (alist-get :fingerprints cw-activity-coder--session-stats))
-          (cl-incf (alist-get :prompt-tokens cw-activity-coder--session-stats)
-                  (alist-get 'prompt_tokens usage 0))
-          (cl-incf (alist-get :completion-tokens cw-activity-coder--session-stats)
-                  (alist-get 'completion_tokens usage 0))
+          (push
+           (alist-get 'system_fingerprint data "unknown")
+           (alist-get :fingerprints cw-activity-coder--session-stats))
+          (cl-incf
+           (alist-get
+            :prompt-tokens cw-activity-coder--session-stats)
+           (alist-get 'prompt_tokens usage 0))
+          (cl-incf
+           (alist-get
+            :completion-tokens cw-activity-coder--session-stats)
+           (alist-get 'completion_tokens usage 0))
           (cl-decf cw-activity-coder--active-requests)
-          (message "DEBUG: Processed batch with %d items" (length result))
+          (message "DEBUG: Processed batch with %d items"
+                   (length result))
           (funcall callback result nil))))
      :error
      (cl-function
@@ -222,38 +259,59 @@
                        cw-activity-coder-max-retries
                        error-thrown)
               (sleep-for 1)
-              (cw-activity-coder--api-request batch (1+ retry-count) callback))
-          (funcall callback nil (format "Failed after %d retries: %s"
-                                       cw-activity-coder-max-retries
-                                       error-thrown))))))))
+              (cw-activity-coder--api-request
+               batch (1+ retry-count) callback))
+          (funcall callback
+                   nil
+                   (format "Failed after %d retries: %s"
+                           cw-activity-coder-max-retries
+                           error-thrown))))))))
 
-(defun cw-activity-coder--process-batch (start-line end-line callback total-batches processed-batches)
+(defun cw-activity-coder--process-batch
+    (start-line end-line callback total-batches processed-batches)
   "Process a batch from START-LINE to END-LINE, calling CALLBACK."
   (when (> (- end-line start-line) 0)
-    (let ((batch (cw-activity-coder--parse-buffer-to-json start-line end-line)))
+    (let ((batch
+           (cw-activity-coder--parse-buffer-to-json
+            start-line end-line)))
       (let ((start-time (float-time)))
         (cw-activity-coder--api-request
          batch 0
          (lambda (batch-result error)
            (push (- (float-time) start-time)
-                 (alist-get :response-times cw-activity-coder--session-stats))
-           (message "DEBUG: Batch from %d to %d completed" start-line end-line)
+                 (alist-get
+                  :response-times cw-activity-coder--session-stats))
+           (message "DEBUG: Batch from %d to %d completed"
+                    start-line
+                    end-line)
            (setq cw-activity-coder--progress
-                 (format "CW: %d/%d batches" (1+ processed-batches) total-batches))
+                 (format "CW: %d/%d batches"
+                         (1+ processed-batches)
+                         total-batches))
            (force-mode-line-update)
-           (funcall callback batch-result error total-batches (1+ processed-batches))))))))
+           (funcall callback
+                    batch-result
+                    error
+                    total-batches
+                    (1+ processed-batches))))))))
 
 (defun cw-activity-coder--update-buffer (results)
   "Update the buffer with RESULTS, adding or updating the 'cw_at' column."
-  (message "DEBUG: Starting buffer update with %d results" (length results))
+  (message "DEBUG: Starting buffer update with %d results"
+           (length results))
   (with-current-buffer (current-buffer)
-    (let ((inhibit-read-only t))  ;; Ensure buffer is writable
+    (let ((inhibit-read-only t)) ;; Ensure buffer is writable
       (save-excursion
         (goto-char (point-min))
         (let* ((header-line (cw-activity-coder--parse-csv-line))
                (has-cw-at (member "cw_at" header-line))
-               (new-header (if has-cw-at header-line (append header-line '("cw_at")))))
-          (message "DEBUG: Header: %s, has-cw-at: %s" new-header has-cw-at)
+               (new-header
+                (if has-cw-at
+                    header-line
+                  (append header-line '("cw_at")))))
+          (message "DEBUG: Header: %s, has-cw-at: %s"
+                   new-header
+                   has-cw-at)
           (unless has-cw-at
             (delete-region (point) (line-end-position))
             (insert (mapconcat #'identity new-header ",")))
@@ -261,12 +319,27 @@
             (forward-line 1)
             (when (not (eobp))
               (let* ((fields (cw-activity-coder--parse-csv-line))
-                     (ref (cw-activity-coder--generate-ref (line-number-at-pos)))
-                     (result (cl-find ref results :key (lambda (r) (alist-get "ref" r)) :test #'string=))
-                     (cw-at (if result (alist-get "cw_at" result) "NDE")))
-                (message "DEBUG: Line %d, ref: %s, cw_at: %s" (line-number-at-pos) ref cw-at)
+                     (ref
+                      (cw-activity-coder--generate-ref
+                       (line-number-at-pos)))
+                     (result
+                      (cl-find
+                       ref
+                       results
+                       :key (lambda (r) (alist-get "ref" r))
+                       :test #'string=))
+                     (cw-at
+                      (if result
+                          (alist-get "cw_at" result)
+                        "NDE")))
+                (message "DEBUG: Line %d, ref: %s, cw_at: %s"
+                         (line-number-at-pos)
+                         ref
+                         cw-at)
                 (delete-region (point) (line-end-position))
-                (insert (mapconcat #'identity (append fields (list cw-at)) ",")))))))
+                (insert
+                 (mapconcat #'identity (append fields (list cw-at))
+                            ",")))))))
       (message "DEBUG: Buffer update complete"))))
 
 ;;;###autoload
@@ -277,51 +350,75 @@
       (progn
         (cw-activity-coder--validate-csv-buffer)
         (let* ((total-lines (count-lines (point-min) (point-max)))
-               (batches (ceiling (- total-lines 1) cw-activity-coder-max-batch-size))
+               (batches
+                (ceiling (- total-lines 1)
+                         cw-activity-coder-max-batch-size))
                (results '())
                (errors '())
                (processed-batches 0))
-          (message "Processing %d rows in %d batches..." (- total-lines 1) batches)
-          (setq cw-activity-coder--progress (format "CW: 0/%d batches" batches))
+          (message "Processing %d rows in %d batches..."
+                   (- total-lines 1)
+                   batches)
+          (setq cw-activity-coder--progress
+                (format "CW: 0/%d batches" batches))
           (force-mode-line-update)
           (dotimes (i batches)
-            (let ((start-line (+ 2 (* i cw-activity-coder-max-batch-size)))
-                  (end-line (min (+ 2 (* (1+ i) cw-activity-coder-max-batch-size)) total-lines)))
+            (let ((start-line
+                   (+ 2 (* i cw-activity-coder-max-batch-size)))
+                  (end-line
+                   (min (+ 2
+                           (* (1+ i)
+                              cw-activity-coder-max-batch-size))
+                        total-lines)))
               (cw-activity-coder--process-batch
                start-line end-line
-               (lambda (batch-result error total-batches new-processed)
+               (lambda (batch-result
+                        error total-batches new-processed)
                  (if error
                      (push error errors)
                    (setq results (append results batch-result)))
-                 (message "DEBUG: Batch %d/%d done, results: %d, errors: %d"
-                          new-processed total-batches (length results) (length errors))
+                 (message
+                  "DEBUG: Batch %d/%d done, results: %d, errors: %d"
+                  new-processed
+                  total-batches
+                  (length results)
+                  (length errors))
                  (when (= new-processed total-batches)
                    (if errors
                        (progn
-                         (setq cw-activity-coder--progress (format "CW: Failed with %d errors" (length errors)))
+                         (setq cw-activity-coder--progress
+                               (format "CW: Failed with %d errors"
+                                       (length errors)))
                          (force-mode-line-update)
-                         (error "Processing failed: %s" (string-join errors "; ")))
+                         (error
+                          "Processing failed: %s"
+                          (string-join errors "; ")))
                      (cw-activity-coder--update-buffer results)
                      (setq cw-activity-coder--progress "CW: Complete")
                      (force-mode-line-update)
-                     (message "Processing complete. Stats: %s" (cw-activity-coder--stats-string)))))
-               batches processed-batches))))
-    (error (message "Error in cw-activity-coder: %s" (error-message-string err)))))
+                     (message "Processing complete. Stats: %s"
+                              (cw-activity-coder--stats-string)))))
+               batches processed-batches)))))
+    (error
+     (message "Error in cw-activity-coder: %s"
+              (error-message-string err)))))
 
 (defun cw-activity-coder--stats-string ()
   "Return a string summarizing session stats."
   (let ((stats cw-activity-coder--session-stats))
-    (format "Prompt tokens: %d, Completion tokens: %d, Avg response: %.2fs, Fingerprints: %d"
-            (alist-get :prompt-tokens stats)
-            (alist-get :completion-tokens stats)
-            (if (alist-get :response-times stats)
-                (/ (apply #'+ (alist-get :response-times stats))
-                   (length (alist-get :response-times stats)))
-              0.0)
-            (length (alist-get :fingerprints stats)))))
+    (format
+     "Prompt tokens: %d, Completion tokens: %d, Avg response: %.2fs, Fingerprints: %d"
+     (alist-get :prompt-tokens stats)
+     (alist-get :completion-tokens stats)
+     (if (alist-get :response-times stats)
+         (/ (apply #'+ (alist-get :response-times stats))
+            (length (alist-get :response-times stats)))
+       0.0)
+     (length (alist-get :fingerprints stats)))))
 
 ;; Add progress to mode-line
-(add-to-list 'mode-line-misc-info '(:eval cw-activity-coder--progress) t)
+(add-to-list 'mode-line-misc-info '(:eval cw-activity-coder--progress)
+             t)
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
