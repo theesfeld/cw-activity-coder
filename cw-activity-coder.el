@@ -1,7 +1,7 @@
 ;;; cw-activity-coder.el --- Assign activity codes to CSV rows using xAI API -*- lexical-binding: t; -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 1.0.2
+;; Version: 1.0.3
 ;; Package-Requires: ((emacs "27.1") (request "0.3.3") (csv-mode "1.25"))
 ;; Keywords: tools, csv, xai, ai
 ;; URL: https://github.com/theesfeld/cw-activity-coder
@@ -84,6 +84,10 @@
 
 (defvar cw-activity-coder--active-requests 0
   "Counter for active API requests.")
+
+(defvar cw-activity-coder--progress ""
+  "Progress string for modeline."
+  :group 'cw-activity-coder)
 
 (defun cw-activity-coder--validate-csv-buffer ()
   "Validate that the current buffer is a valid CSV file."
@@ -223,7 +227,7 @@
                                        cw-activity-coder-max-retries
                                        error-thrown))))))))
 
-(defun cw-activity-coder--process-batch (start-line end-line callback)
+(defun cw-activity-coder--process-batch (start-line end-line callback total-batches processed-batches)
   "Process a batch from START-LINE to END-LINE, calling CALLBACK."
   (when (> (- end-line start-line) 0)
     (let ((batch (cw-activity-coder--parse-buffer-to-json start-line end-line)))
@@ -234,28 +238,36 @@
            (push (- (float-time) start-time)
                  (alist-get :response-times cw-activity-coder--session-stats))
            (message "DEBUG: Batch from %d to %d completed" start-line end-line)
-           (funcall callback batch-result error)))))))
+           (setq cw-activity-coder--progress
+                 (format "CW: %d/%d batches" (1+ processed-batches) total-batches))
+           (force-mode-line-update)
+           (funcall callback batch-result error total-batches (1+ processed-batches))))))))
 
 (defun cw-activity-coder--update-buffer (results)
   "Update the buffer with RESULTS, adding or updating the 'cw_at' column."
-  (save-excursion
-    (goto-char (point-min))
-    (let* ((header-line (cw-activity-coder--parse-csv-line))
-           (has-cw-at (member "cw_at" header-line))
-           (new-header (if has-cw-at header-line (append header-line '("cw_at")))))
-      (message "DEBUG: Updating buffer with %d results" (length results))
-      (unless has-cw-at
-        (delete-region (point) (line-end-position))
-        (insert (mapconcat #'identity new-header ",")))
-      (while (not (eobp))
-        (forward-line 1)
-        (when (not (eobp))
-          (let* ((fields (cw-activity-coder--parse-csv-line))
-                 (ref (cw-activity-coder--generate-ref (line-number-at-pos)))
-                 (result (cl-find ref results :key (lambda (r) (alist-get "ref" r)) :test #'string=))
-                 (cw-at (if result (alist-get "cw_at" result) "NDE")))
+  (message "DEBUG: Starting buffer update with %d results" (length results))
+  (with-current-buffer (current-buffer)
+    (let ((inhibit-read-only t))  ;; Ensure buffer is writable
+      (save-excursion
+        (goto-char (point-min))
+        (let* ((header-line (cw-activity-coder--parse-csv-line))
+               (has-cw-at (member "cw_at" header-line))
+               (new-header (if has-cw-at header-line (append header-line '("cw_at")))))
+          (message "DEBUG: Header: %s, has-cw-at: %s" new-header has-cw-at)
+          (unless has-cw-at
             (delete-region (point) (line-end-position))
-            (insert (mapconcat #'identity (append fields (list cw-at)) ","))))))))
+            (insert (mapconcat #'identity new-header ",")))
+          (while (not (eobp))
+            (forward-line 1)
+            (when (not (eobp))
+              (let* ((fields (cw-activity-coder--parse-csv-line))
+                     (ref (cw-activity-coder--generate-ref (line-number-at-pos)))
+                     (result (cl-find ref results :key (lambda (r) (alist-get "ref" r)) :test #'string=))
+                     (cw-at (if result (alist-get "cw_at" result) "NDE")))
+                (message "DEBUG: Line %d, ref: %s, cw_at: %s" (line-number-at-pos) ref cw-at)
+                (delete-region (point) (line-end-position))
+                (insert (mapconcat #'identity (append fields (list cw-at)) ",")))))))
+      (message "DEBUG: Buffer update complete"))))
 
 ;;;###autoload
 (defun cw-activity-coder-process-buffer ()
@@ -267,24 +279,33 @@
         (let* ((total-lines (count-lines (point-min) (point-max)))
                (batches (ceiling (- total-lines 1) cw-activity-coder-max-batch-size))
                (results '())
-               (errors '()))
+               (errors '())
+               (processed-batches 0))
           (message "Processing %d rows in %d batches..." (- total-lines 1) batches)
+          (setq cw-activity-coder--progress (format "CW: 0/%d batches" batches))
+          (force-mode-line-update)
           (dotimes (i batches)
             (let ((start-line (+ 2 (* i cw-activity-coder-max-batch-size)))
                   (end-line (min (+ 2 (* (1+ i) cw-activity-coder-max-batch-size)) total-lines)))
               (cw-activity-coder--process-batch
                start-line end-line
-               (lambda (batch-result error)
+               (lambda (batch-result error total-batches new-processed)
                  (if error
                      (push error errors)
                    (setq results (append results batch-result)))
                  (message "DEBUG: Batch %d/%d done, results: %d, errors: %d"
-                          (1+ i) batches (length results) (length errors))
-                 (when (= (+ (length errors) (length results)) batches)
+                          new-processed total-batches (length results) (length errors))
+                 (when (= new-processed total-batches)
                    (if errors
-                       (error "Processing failed: %s" (string-join errors "; "))
-                     (cw-activity-coder--update-buffer results)))))))
-          (message "Processing complete. Stats: %s" (cw-activity-coder--stats-string))))
+                       (progn
+                         (setq cw-activity-coder--progress (format "CW: Failed with %d errors" (length errors)))
+                         (force-mode-line-update)
+                         (error "Processing failed: %s" (string-join errors "; ")))
+                     (cw-activity-coder--update-buffer results)
+                     (setq cw-activity-coder--progress "CW: Complete")
+                     (force-mode-line-update)
+                     (message "Processing complete. Stats: %s" (cw-activity-coder--stats-string)))))
+               batches processed-batches))))
     (error (message "Error in cw-activity-coder: %s" (error-message-string err)))))
 
 (defun cw-activity-coder--stats-string ()
@@ -298,6 +319,9 @@
                    (length (alist-get :response-times stats)))
               0.0)
             (length (alist-get :fingerprints stats)))))
+
+;; Add progress to mode-line
+(add-to-list 'mode-line-misc-info '(:eval cw-activity-coder--progress) t)
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
