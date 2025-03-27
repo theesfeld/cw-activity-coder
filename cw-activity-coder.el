@@ -57,7 +57,7 @@
   :group 'cw-activity-coder)
 
 (defconst cw-activity-coder--package-dir
-  (file-name-directory (or load-file-name buffer-file-name))
+  (file-name-directory (locate-library "cw-activity-coder"))
   "Directory containing the package files.")
 
 (defconst cw-activity-coder-activity-codes
