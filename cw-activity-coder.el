@@ -397,8 +397,9 @@
                      (setq cw-activity-coder--progress "CW: Complete")
                      (force-mode-line-update)
                      (message "Processing complete. Stats: %s"
-                              (cw-activity-coder--stats-string)))))
-               batches processed-batches)))))
+                              (cw-activity-coder--stats-string))))))
+              batches
+              processed-batches))))
     (error
      (message "Error in cw-activity-coder: %s"
               (error-message-string err)))))
