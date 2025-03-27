@@ -125,23 +125,23 @@
   "Parse current line as CSV, returning list of fields."
   (let ((line
          (buffer-substring-no-properties
-          (line-beginning-position) (line-end-position)))
-        (fields '())
-        (current "")
-        (in-quotes nil))
-    (dolist (char (append line nil))
-      (cond
-       ((and (eq char ?\") (not in-quotes))
-        (setq in-quotes t))
-       ((and (eq char ?\") in-quotes)
-        (setq in-quotes nil))
-       ((and (eq char ?,) (not in-quotes))
-        (push current fields)
-        (setq current ""))
-       (t
-        (setq current (concat current (string char))))))
-    (push current fields)
-    (nreverse fields)))
+          (line-beginning-position) (line-end-position))))
+    (fields '())
+    (current "")
+    (in-quotes nil))
+  (dolist (char (append line nil))
+    (cond
+     ((and (eq char ?\") (not in-quotes))
+      (setq in-quotes t))
+     ((and (eq char ?\") in-quotes)
+      (setq in-quotes nil))
+     ((and (eq char ?,) (not in-quotes))
+      (push current fields)
+      (setq current ""))
+     (t
+      (setq current (concat current (string char))))))
+  (push current fields)
+  (nreverse fields))
 
 (defun cw-activity-coder--parse-buffer-to-json (start-line end-line)
   "Parse CSV lines from START-LINE to END-LINE into a JSON array."
@@ -308,38 +308,40 @@
                (new-header
                 (if has-cw-at
                     header-line
-                  (append header-line '("cw_at")))))
-          (message "DEBUG: Header: %s, has-cw-at: %s"
-                   new-header
-                   has-cw-at)
-          (unless has-cw-at
-            (delete-region (point) (line-end-position))
-            (insert (mapconcat #'identity new-header ",")))
-          (while (not (eobp))
-            (forward-line 1)
-            (when (not (eobp))
-              (let* ((fields (cw-activity-coder--parse-csv-line))
-                     (ref
-                      (cw-activity-coder--generate-ref
-                       (line-number-at-pos)))
-                     (result
-                      (cl-find
-                       ref
-                       results
-                       :key (lambda (r) (alist-get "ref" r))
-                       :test #'string=))
-                     (cw-at
-                      (if result
-                          (alist-get "cw_at" result)
-                        "NDE")))
-                (message "DEBUG: Line %d, ref: %s, cw_at: %s"
-                         (line-number-at-pos)
-                         ref
-                         cw-at)
-                (delete-region (point) (line-end-position))
-                (insert
-                 (mapconcat #'identity (append fields (list cw-at))
-                            ",")))))))
+                  (append header-line (list "cw_at"))))
+               (message "DEBUG: Header: %s, has-cw-at: %s"
+                        new-header
+                        has-cw-at)
+               (unless has-cw-at
+                 (delete-region (point) (line-end-position))
+                 (insert (mapconcat #'identity new-header ",")))
+               (while (not (eobp))
+                 (forward-line 1)
+                 (when (not (eobp))
+                   (let* ((fields (cw-activity-coder--parse-csv-line))
+                          (ref
+                           (cw-activity-coder--generate-ref
+                            (line-number-at-pos)))
+                          (result
+                           (cl-find
+                            ref
+                            results
+                            :key
+                            (lambda (r) (alist-get "ref" r))
+                            :test #'string=))
+                          (cw-at
+                           (if result
+                               (alist-get "cw_at" result)
+                             "NDE")))
+                     (message "DEBUG: Line %d, ref: %s, cw_at: %s"
+                              (line-number-at-pos)
+                              ref
+                              cw-at)
+                     (delete-region (point) (line-end-position))
+                     (insert
+                      (mapconcat
+                       #'identity (append fields (list cw-at))
+                       ","))))))))
       (message "DEBUG: Buffer update complete"))))
 
 ;;;###autoload
