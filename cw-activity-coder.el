@@ -70,22 +70,21 @@
 
 (defconst cw-activity-coder-activity-codes
   (progn
-    (setq cw-activity-coder--package-dir
-          (file-name-directory
-           (or load-file-name (buffer-file-name))))
-    (message "DEBUG: Package dir set to %s"
-             cw-activity-coder--package-dir)
-    (let ((json-file
-           (expand-file-name "activitycodes.json"
-                             cw-activity-coder--package-dir)))
+    (let ((json-file (expand-file-name "~/activitycodes.json")))
+      (message "DEBUG: Loading JSON from %s" json-file)
+      (message "DEBUG: File exists? %s" (file-exists-p json-file))
       (unless (file-exists-p json-file)
-        (error
-         "activitycodes.json not found in package directory: %s"
-         cw-activity-coder--package-dir))
+        (error "activitycodes.json not found at %s" json-file))
+      (message "DEBUG: Entering with-temp-buffer")
       (with-temp-buffer
+        (message "DEBUG: Inserting file")
         (insert-file-contents json-file)
-        (json-parse-buffer))))
-  "Activity codes JSON object loaded from activitycodes.json.")
+        (message "DEBUG: File inserted")
+        (message "DEBUG: Parsing JSON")
+        (json-parse-buffer)
+        (message "DEBUG: JSON parsed")))
+    (message "DEBUG: Defconst complete"))
+  "Activity codes JSON object loaded from ~/activitycodes.json.")
 
 (defvar cw-activity-coder--session-stats
   '((:prompt-tokens . 0)
