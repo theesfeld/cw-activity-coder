@@ -1,10 +1,10 @@
 ;;; cw-activity-coder.el --- Assign activity codes to CSV rows using xAI API -*- lexical-binding: t; -*-
 
-;; Author: Your Name <your.email@example.com>
+;; Author: William Theesfeld <william@theesfeld.net>
 ;; Version: 1.0.1
 ;; Package-Requires: ((emacs "27.1") (request "0.3.3") (csv-mode "1.25"))
 ;; Keywords: tools, csv, xai, ai
-;; URL: https://github.com/yourusername/cw-activity-coder
+;; URL: https://github.com/theesfeld/cw-activity-coder
 
 ;;; Commentary:
 
@@ -51,7 +51,15 @@
   :type 'string)
 
 (defconst cw-activity-coder--package-dir
-  (file-name-directory (locate-library "cw-activity-coder"))
+  (let ((lib-path (locate-library "cw-activity-coder")))
+    (cond
+     (lib-path
+      (file-name-directory lib-path))
+     (load-file-name
+      (file-name-directory load-file-name))
+     (t
+      (error
+       "Cannot determine package directory for cw-activity-coder; ensure it's in load-path"))))
   "Directory containing the package files.")
 
 (defconst cw-activity-coder-activity-codes
