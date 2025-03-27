@@ -71,7 +71,8 @@
 (defconst cw-activity-coder-activity-codes
   (progn
     (setq cw-activity-coder--package-dir
-          (cw-activity-coder--get-package-dir))
+          (file-name-directory
+           (or load-file-name (buffer-file-name))))
     (message "DEBUG: Package dir set to %s"
              cw-activity-coder--package-dir)
     (let ((json-file
