@@ -372,11 +372,11 @@
                         total-lines)))
               (cw-activity-coder--process-batch
                start-line end-line
-               (lambda (batch-result error)
+               (lambda (batch-result
+                        error total-batches processed-batches)
                  (if error
                      (push error errors)
                    (setq results (append results batch-result)))
-                 (setq processed-batches (1+ processed-batches))
                  (message
                   "DEBUG: Batch %d/%d done, results: %d, errors: %d"
                   processed-batches
@@ -398,10 +398,10 @@
                      (force-mode-line-update)
                      (message "Processing complete. Stats: %s"
                               (cw-activity-coder--stats-string)))))
-               batches processed-batches))))
-        (error
-         (message "Error in cw-activity-coder: %s"
-                  (error-message-string err))))))
+               batches processed-batches)))))
+    (error
+     (message "Error in cw-activity-coder: %s"
+              (error-message-string err)))))
 
 (defun cw-activity-coder--stats-string ()
   "Return a string summarizing session stats."
