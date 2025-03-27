@@ -1,17 +1,17 @@
-;;; xai-activity-coder.el --- Assign activity codes to CSV rows using xAI API -*- lexical-binding: t; coding: utf-8 -*-
+;;; cw-activity-coder.el --- Assign activity codes to CSV rows using xAI API -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Author: Your Name <your.email@example.com>
 ;; Version: 1.0.0
 ;; Package-Requires: ((emacs "30.1") (request "0.3.3") (csv-mode "1.25"))
 ;; Keywords: tools, csv, xai, ai
-;; URL: https://github.com/yourusername/xai-activity-coder
+;; URL: https://github.com/yourusername/cw-activity-coder
 
 ;;; Commentary:
 
 ;; This package processes CSV buffers in-place, adding a "cw_at" column with
 ;; activity codes determined by the xAI API. It validates CSV format, batches
 ;; requests, and handles retries and errors robustly. Requires an API key in
-;; the environment variable specified by `xai-activity-coder-api-key-env-var'.
+;; the environment variable specified by `cw-activity-coder-api-key-env-var'.
 
 ;;; Code:
 
@@ -20,56 +20,56 @@
 (require 'csv-mode)
 (require 'json)
 
-(defgroup xai-activity-coder nil
+(defgroup cw-activity-coder nil
   "Customization group for xAI Activity Coder."
   :group 'tools
-  :prefix "xai-activity-coder-")
+  :prefix "cw-activity-coder-")
 
-(defcustom xai-activity-coder-api-key-env-var "XAI_API_KEY"
+(defcustom cw-activity-coder-api-key-env-var "XAI_API_KEY"
   "Environment variable name containing the xAI API key."
   :type 'string
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defcustom xai-activity-coder-rate-limit 8
+(defcustom cw-activity-coder-rate-limit 8
   "Maximum concurrent API requests."
   :type 'integer
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defcustom xai-activity-coder-max-batch-size 100
+(defcustom cw-activity-coder-max-batch-size 100
   "Maximum number of rows per API batch."
   :type 'integer
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defcustom xai-activity-coder-max-retries 3
+(defcustom cw-activity-coder-max-retries 3
   "Maximum retries per failed batch."
   :type 'integer
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defcustom xai-activity-coder-api-timeout 300
+(defcustom cw-activity-coder-api-timeout 300
   "API request timeout in seconds."
   :type 'integer
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defcustom xai-activity-coder-model "grok-2-latest"
+(defcustom cw-activity-coder-model "grok-2-latest"
   "xAI model to use for coding."
   :type 'string
-  :group 'xai-activity-coder)
+  :group 'cw-activity-coder)
 
-(defconst xai-activity-coder-activity-codes
+(defconst cw-activity-coder-activity-codes
   (json-parse-string
    (with-temp-buffer
      (insert-file-contents-literally "activitycodes.json")
      (buffer-string)))
   "Activity codes JSON object loaded from activitycodes.json.")
 
-(defvar xai-activity-coder--session-stats
+(defvar cw-activity-coder--session-stats
   '((:prompt-tokens . 0)
     (:completion-tokens . 0)
     (:response-times . nil)
     (:fingerprints . nil))
   "Session statistics for API usage.")
 
-(defun xai-activity-coder--validate-csv-buffer ()
+(defun cw-activity-coder--validate-csv-buffer ()
   "Validate that the current buffer is a valid CSV file."
   (unless (eq major-mode 'csv-mode)
     (error "Buffer is not in csv-mode; please enable it first"))
@@ -86,18 +86,18 @@
           (error "Invalid CSV line at %d" (line-number-at-pos))))))
   t)
 
-(defun xai-activity-coder--generate-ref (row-index)
+(defun cw-activity-coder--generate-ref (row-index)
   "Generate a unique reference ID for a row."
   (let ((buffer-hash (md5 (buffer-name))))
     (format "%s-%d" (substring buffer-hash 0 8) row-index)))
 
-(defun xai-activity-coder--system-prompt ()
+(defun cw-activity-coder--system-prompt ()
   "Return the system prompt with activity codes."
   (format
    "Process the provided JSON array of objects. For each object, determine the appropriate activity code based on all its fields and the definitions below. Return the assigned 'cw_at' code along with the object's 'ref' field.\n\nRules:\n- Use 'code', 'description', and 'type_of_work' from definitions to infer the code based on the full row data.\n- For 'CB' prefixed situations:\n  - Use 'CB-EMG' if person(s) trapped in elevator is indicated in any field.\n  - Otherwise, use specific CB-XXX (e.g., 'CB-EF', 'CB-MU'), defaulting to 'CB-EF' if unclear.\n- Use 'NDE' if no code fits.\n\nActivity Code Definitions (JSON):\n%s"
-   (json-encode xai-activity-coder-activity-codes)))
+   (json-encode cw-activity-coder-activity-codes)))
 
-(defun xai-activity-coder--parse-buffer-to-json (start-line end-line)
+(defun cw-activity-coder--parse-buffer-to-json (start-line end-line)
   "Parse CSV lines from START-LINE to END-LINE into a JSON array."
   (save-excursion
     (goto-char (point-min))
@@ -110,24 +110,24 @@
           (let* ((fields (csv-mode--parse-line))
                  (row (cl-mapcar #'cons header fields))
                  (ref
-                  (xai-activity-coder--generate-ref
+                  (cw-activity-coder--generate-ref
                    (line-number-at-pos))))
             (push (append row (list (cons "ref" ref))) rows))))
       (nreverse rows))))
 
-(defun xai-activity-coder--api-request (batch retry-count callback)
+(defun cw-activity-coder--api-request (batch retry-count callback)
   "Send a batch to the xAI API with RETRY-COUNT retries, calling CALLBACK."
   (let* ((api-key
-          (or (getenv xai-activity-coder-api-key-env-var)
+          (or (getenv cw-activity-coder-api-key-env-var)
               (error
                "API key not set in %s"
-               xai-activity-coder-api-key-env-var)))
+               cw-activity-coder-api-key-env-var)))
          (payload
-          `((model . ,xai-activity-coder-model)
+          `((model . ,cw-activity-coder-model)
             (messages
              .
              [((role . "system")
-               (content . ,(xai-activity-coder--system-prompt)))
+               (content . ,(cw-activity-coder--system-prompt)))
               ((role . "user")
                (content
                 .
@@ -158,7 +158,7 @@
      `(("Authorization" . ,(concat "Bearer " api-key))
        ("Content-Type" . "application/json"))
      :data (json-encode payload)
-     :timeout xai-activity-coder-api-timeout
+     :timeout cw-activity-coder-api-timeout
      :parser 'json-read
      :success
      (cl-function
@@ -170,58 +170,58 @@
                        'content)))
                (result (json-parse-string content))
                (usage (alist-get 'usage data)))
-          (push (alist-get 'system_fingerprint data "unknown")
-                (alist-get
-                 :fingerprints xai-activity-coder--session-stats))
+          (push
+           (alist-get 'system_fingerprint data "unknown")
+           (alist-get :fingerprints cw-activity-coder--session-stats))
           (cl-incf
            (alist-get
-            :prompt-tokens xai-activity-coder--session-stats)
+            :prompt-tokens cw-activity-coder--session-stats)
            (alist-get 'prompt_tokens usage 0))
           (cl-incf
            (alist-get
-            :completion-tokens xai-activity-coder--session-stats)
+            :completion-tokens cw-activity-coder--session-stats)
            (alist-get 'completion_tokens usage 0))
           (funcall callback result nil))))
      :error
      (cl-function
       (lambda (&key error-thrown &allow-other-keys)
-        (if (< retry-count xai-activity-coder-max-retries)
+        (if (< retry-count cw-activity-coder-max-retries)
             (progn
               (message "Retrying batch (attempt %d/%d): %s"
                        (1+ retry-count)
-                       xai-activity-coder-max-retries
+                       cw-activity-coder-max-retries
                        error-thrown)
               (sleep-for 1)
-              (xai-activity-coder--api-request
+              (cw-activity-coder--api-request
                batch (1+ retry-count) callback))
           (funcall callback
                    nil
                    (format "Failed after %d retries: %s"
-                           xai-activity-coder-max-retries
+                           cw-activity-coder-max-retries
                            error-thrown))))))))
 
-(defun xai-activity-coder--process-batch
+(defun cw-activity-coder--process-batch
     (start-line end-line semaphore callback)
   "Process a batch from START-LINE to END-LINE with SEMAPHORE, calling CALLBACK."
   (when (> (- end-line start-line) 0)
     (let ((batch
-           (xai-activity-coder--parse-buffer-to-json
+           (cw-activity-coder--parse-buffer-to-json
             start-line end-line)))
       (semaphore-acquire
        semaphore
        (lambda ()
          (let ((start-time (float-time)))
-           (xai-activity-coder--api-request
+           (cw-activity-coder--api-request
             batch 0
             (lambda (result error)
               (push
                (- (float-time) start-time)
                (alist-get
-                :response-times xai-activity-coder--session-stats))
+                :response-times cw-activity-coder--session-stats))
               (semaphore-release semaphore)
               (funcall callback result error)))))))))
 
-(defun xai-activity-coder--update-buffer (results)
+(defun cw-activity-coder--update-buffer (results)
   "Update the buffer with RESULTS, adding or updating the 'cw_at' column."
   (save-excursion
     (goto-char (point-min))
@@ -241,7 +241,7 @@
         (when (not (eobp))
           (let* ((fields (csv-mode--parse-line))
                  (ref
-                  (xai-activity-coder--generate-ref
+                  (cw-activity-coder--generate-ref
                    (line-number-at-pos)))
                  (result
                   (cl-find
@@ -259,18 +259,18 @@
                         ","))))))))
 
 ;;;###autoload
-(defun xai-activity-coder-process-buffer ()
+(defun cw-activity-coder-process-buffer ()
   "Process the current CSV buffer, adding activity codes in-place."
   (interactive)
   (condition-case err
       (progn
-        (xai-activity-coder--validate-csv-buffer)
+        (cw-activity-coder--validate-csv-buffer)
         (let* ((total-lines (count-lines (point-min) (point-max)))
                (batches
                 (ceiling (- total-lines 1)
-                         xai-activity-coder-max-batch-size))
+                         cw-activity-coder-max-batch-size))
                (semaphore
-                (make-semaphore xai-activity-coder-rate-limit))
+                (make-semaphore cw-activity-coder-rate-limit))
                (results '())
                (errors '()))
           (message "Processing %d rows in %d batches..."
@@ -278,12 +278,12 @@
                    batches)
           (dotimes (i batches)
             (let ((start-line
-                   (+ 2 (* i xai-activity-coder-max-batch-size)))
+                   (+ 2 (* i cw-activity-coder-max-batch-size)))
                   (end-line
                    (min (+ start-line
-                           xai-activity-coder-max-batch-size)
+                           cw-activity-coder-max-batch-size)
                         total-lines)))
-              (xai-activity-coder--process-batch
+              (cw-activity-coder--process-batch
                start-line end-line semaphore
                (lambda (batch-result error)
                  (if error
@@ -296,17 +296,16 @@
                        (error
                         "Processing failed: %s"
                         (string-join errors "; "))
-                     (xai-activity-coder--update-buffer
-                      results))))))))
+                     (cw-activity-coder--update-buffer results))))))))
         (message "Processing complete. Stats: %s"
-                 (xai-activity-coder--stats-string))))
+                 (cw-activity-coder--stats-string))))
   (error
-   (message "Error in xai-activity-coder: %s"
+   (message "Error in cw-activity-coder: %s"
             (error-message-string err))))
 
-(defun xai-activity-coder--stats-string ()
+(defun cw-activity-coder--stats-string ()
   "Return a string summarizing session stats."
-  (let ((stats xai-activity-coder--session-stats))
+  (let ((stats cw-activity-coder--session-stats))
     (format
      "Prompt tokens: %d, Completion tokens: %d, Avg response: %.2fs, Fingerprints: %d"
      (alist-get :prompt-tokens stats)
@@ -317,5 +316,5 @@
        0.0)
      (length (alist-get :fingerprints stats)))))
 
-(provide 'xai-activity-coder)
-;;; xai-activity-coder.el ends here
+(provide 'cw-activity-coder)
+;;; cw-activity-coder.el ends here
