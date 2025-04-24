@@ -1,19 +1,21 @@
 
 # CW Activity Coder
 
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
+![Emacs: 27.1+](https://img.shields.io/badge/Emacs-27.1+-blueviolet.svg)
+
 An Emacs package to process CSV/JSON files with various LLM APIs, assigning CW activity codes.
 
 ## Features
 
-- Support for multiple LLM providers (xAI, OpenAI, Anthropic, Google Gemini, GitHub Copilot)
-- Interactive Transient menu
-- Live Org-mode output with error highlighting (NDE codes)
-- Modeline progress display
-- Dired integration for file selection
-- Asynchronous API requests with rate limiting
-- Persistent, editable activity codes in ```activitycodes.json```
-- CSV output to a customizable directory
-- Comprehensive results dashboard with provider-specific statistics
+- **Multi-Provider Support**: Use xAI, OpenAI, Anthropic, Google Gemini, or GitHub Copilot
+- **Interactive Setup**: Easy configuration with `M-x cw-activity-coder-setup`
+- **Secure API Key Management**: Store keys in environment variables or secure files
+- **Cost Estimation**: See estimated API costs before processing
+- **Comprehensive Dashboard**: Detailed statistics with token usage and cost breakdown
+- **Export Options**: Save results as CSV or formatted reports
+- **Progress Tracking**: Real-time updates in the mode line
+- **Error Handling**: Robust error recovery and reporting
 
 ## Requirements
 
@@ -89,32 +91,54 @@ Install ```transient``` manually if not already present:
 M-x package-install RET transient RET
 ```
 
-## Usage
+## Quick Start
 
-1. Launch: ```M-x cw-activity-coder```
-2. Menu options:
-   - ```a```: Add files from Dired (mark with ```m``` in Dired first)
-   - ```p```: Process queued files
-   - ```r```: Show receipt
-   - ```e```: Edit activity codes (save with ```C-c C-c```)
-   - ```c```: Clear queue
-   - ```q```: Quit
-3. Monitor progress in the modeline and output in ```*CW Activity Coder Output*```
-4. Results saved as CSV in ```cw-activity-coder-output-dir``` (default ```~/cw-activity-coder-output/```)
-5. Edit codes via ```e```; changes persist in ```cw-activity-coder-activity-codes-file```
+1. **Setup**: Run `M-x cw-activity-coder-setup` to configure your preferred LLM provider and API key
+2. **Process**: Open a CSV file and run `M-x cw-activity-coder-process-buffer`
+3. **Review**: Check the results dashboard that appears after processing
+4. **Export**: Press `e` in the results buffer to export as CSV or `s` to save as a report
+
+## API Key Management
+
+You can provide your API key in three ways:
+
+1. **Direct setting**: `(setq cw-activity-coder-api-key "your-key-here")`
+2. **Environment variable**:
+   ```bash
+   export OPENAI_API_KEY="your-key-here"
+   # Or for other providers:
+   export XAI_API_KEY="your-key-here"
+   export ANTHROPIC_API_KEY="your-key-here"
+   export GEMINI_API_KEY="your-key-here"
+   export GITHUB_COPILOT_TOKEN="your-key-here"
+   ```
+3. **Key file**: Create a file at `~/.openai_key` (or `~/.xai_key`, etc.) containing just your API key
+
+The interactive setup will guide you through this process and offer to save your key securely.
+
+## Available Commands
+
+- `M-x cw-activity-coder-setup` - Interactive setup wizard
+- `M-x cw-activity-coder-process-buffer` - Process the current CSV buffer
+- `M-x cw-activity-coder-show-results` - Show results from the last processing run
+- In results buffer:
+  - `e` - Export results as CSV
+  - `s` - Save as formatted report
+  - `q` - Close the results buffer
 
 ## Customization
 
-- Run ```M-x customize-group RET cw-activity-coder``` to adjust:
-  - ```cw-activity-coder-llm-provider``` - Choose your LLM provider
-  - ```cw-activity-coder-api-key``` - Set your API key directly
-  - ```cw-activity-coder-model``` - Override the default model
-  - ```cw-activity-coder-api-key-env-vars``` - Customize environment variable names
-  - ```cw-activity-coder-api-key-files``` - Customize key file locations
-  - ```cw-activity-coder-max-batch-size``` - Adjust batch size for API requests
-  - ```cw-activity-coder-api-timeout``` - Set API request timeout
-  - ```cw-activity-coder-debug``` - Enable/disable debug logging
-  - ```cw-activity-coder-show-results-buffer``` - Show/hide results dashboard
+Run `M-x customize-group RET cw-activity-coder` to adjust:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `cw-activity-coder-llm-provider` | LLM provider to use | `nil` (prompt) |
+| `cw-activity-coder-api-key` | API key | `nil` (use env/file) |
+| `cw-activity-coder-model` | Model name | Provider default |
+| `cw-activity-coder-max-batch-size` | Rows per API batch | `100` |
+| `cw-activity-coder-api-timeout` | API timeout in seconds | `300` |
+| `cw-activity-coder-debug` | Enable debug messages | `nil` |
+| `cw-activity-coder-show-results-buffer` | Show results dashboard | `t` |
 
 ## Notes
 

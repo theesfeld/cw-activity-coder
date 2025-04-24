@@ -279,27 +279,53 @@ FORMAT-STRING and ARGS are passed to `message'."
   (unless cw-activity-coder-llm-provider
     (error "LLM provider not set. Please set `cw-activity-coder-llm-provider`"))
   
-  (or
-   ;; Directly set API key
-   cw-activity-coder-api-key
-   
-   ;; From environment variable
-   (let ((env-var (alist-get cw-activity-coder-llm-provider 
-                             cw-activity-coder-api-key-env-vars)))
-     (when env-var
-       (getenv env-var)))
-   
-   ;; From key file
-   (let ((key-file (alist-get cw-activity-coder-llm-provider 
-                              cw-activity-coder-api-key-files)))
-     (when (and key-file (file-exists-p (expand-file-name key-file)))
-       (with-temp-buffer
-         (insert-file-contents (expand-file-name key-file))
-         (string-trim (buffer-string)))))
-   
-   ;; No key found
-   (error "API key not found for %s. Please set it via custom variable, environment variable, or key file"
-          cw-activity-coder-llm-provider)))
+  (let ((key
+         (or
+          ;; Directly set API key
+          cw-activity-coder-api-key
+          
+          ;; From environment variable
+          (let ((env-var (alist-get cw-activity-coder-llm-provider 
+                                   cw-activity-coder-api-key-env-vars)))
+            (when env-var
+              (getenv env-var)))
+          
+          ;; From key file
+          (let ((key-file (alist-get cw-activity-coder-llm-provider 
+                                    cw-activity-coder-api-key-files)))
+            (when (and key-file (file-exists-p (expand-file-name key-file)))
+              (with-temp-buffer
+                (insert-file-contents (expand-file-name key-file))
+                (string-trim (buffer-string))))))))
+    
+    (if key
+        key
+      ;; No key found - prompt user interactively
+      (let ((key-input (read-passwd 
+                        (format "Enter API key for %s: " 
+                                cw-activity-coder-llm-provider))))
+        (when (and key-input (not (string-empty-p key-input)))
+          ;; Save for this session
+          (setq cw-activity-coder-api-key key-input)
+          ;; Ask if user wants to save permanently
+          (when (yes-or-no-p "Save this API key for future sessions?")
+            (let ((save-method (completing-read 
+                               "Save to: " 
+                               '("Environment variable" "Key file") nil t)))
+              (pcase save-method
+                ("Environment variable"
+                 (let ((env-var (alist-get cw-activity-coder-llm-provider 
+                                          cw-activity-coder-api-key-env-vars)))
+                   (message "Add this to your shell config: export %s=\"%s\""
+                            env-var key-input)))
+                ("Key file"
+                 (let ((key-file (alist-get cw-activity-coder-llm-provider 
+                                           cw-activity-coder-api-key-files)))
+                   (with-temp-file (expand-file-name key-file)
+                     (insert key-input))
+                   (chmod (expand-file-name key-file) #o600)
+                   (message "API key saved to %s" key-file))))))
+          key-input)))))
 
 (defun cw-activity-coder--get-model ()
   "Get model for the selected LLM provider."
@@ -583,7 +609,16 @@ FORMAT-STRING and ARGS are passed to `message'."
                  (total-rows-processed (cl-reduce #'+ cw-activity-coder--stats 
                                                 :key (lambda (s) (plist-get s :batch-size)) 
                                                 :initial-value 0))
-                 (provider-stats (make-hash-table :test 'eq)))
+                 (provider-stats (make-hash-table :test 'eq))
+                 ;; Estimated costs per 1000 tokens (adjust as needed)
+                 (cost-per-1k (make-hash-table :test 'eq)))
+            
+            ;; Set estimated costs per provider
+            (puthash 'openai 0.01 cost-per-1k)  ;; GPT-4o input
+            (puthash 'xai 0.01 cost-per-1k)     ;; Grok-2
+            (puthash 'anthropic 0.015 cost-per-1k) ;; Claude-3 Opus
+            (puthash 'gemini 0.0035 cost-per-1k)   ;; Gemini Pro
+            (puthash 'copilot 0.01 cost-per-1k)    ;; Copilot
             
             ;; Collect provider stats
             (dolist (stat cw-activity-coder--stats)
@@ -600,35 +635,49 @@ FORMAT-STRING and ARGS are passed to `message'."
                               (plist-get stat :batch-size 0))))
                 (puthash provider (list requests successful tokens time rows) provider-stats)))
             
-            ;; Insert summary
-            (insert (propertize "CW Activity Coder Results\n" 'face 'bold))
-            (insert (propertize "========================\n\n" 'face 'bold))
-            
-            (insert (format "Total API requests: %d\n" total-requests))
-            (insert (format "Successful requests: %d (%.1f%%)\n" 
-                           successful-requests 
-                           (if (> total-requests 0)
-                               (* 100.0 (/ successful-requests total-requests))
-                             0.0)))
-            (insert (format "Total processing time: %.2f seconds\n" total-time))
-            (insert (format "Average request time: %.2f seconds\n\n" avg-time))
-            
-            (insert (format "Total rows processed: %d\n" total-rows-processed))
-            (insert (format "Total tokens used: %d\n" total-tokens))
-            (insert (format "  - Prompt tokens: %d\n" total-prompt-tokens))
-            (insert (format "  - Completion tokens: %d\n\n" total-completion-tokens))
+            ;; Calculate total estimated cost
+            (let ((total-cost 0.0))
+              (maphash (lambda (provider data)
+                         (let* ((tokens (nth 2 data))
+                                (provider-cost-per-1k (gethash provider cost-per-1k 0.01))
+                                (cost (* (/ tokens 1000.0) provider-cost-per-1k)))
+                           (setq total-cost (+ total-cost cost))))
+                       provider-stats)
+              
+              ;; Insert summary with timestamp
+              (insert (propertize "CW Activity Coder Results\n" 'face 'bold))
+              (insert (propertize "========================\n" 'face 'bold))
+              (insert (format "Generated: %s\n\n" 
+                             (format-time-string "%Y-%m-%d %H:%M:%S")))
+              
+              (insert (format "Total API requests: %d\n" total-requests))
+              (insert (format "Successful requests: %d (%.1f%%)\n" 
+                             successful-requests 
+                             (if (> total-requests 0)
+                                 (* 100.0 (/ successful-requests total-requests))
+                               0.0)))
+              (insert (format "Total processing time: %.2f seconds\n" total-time))
+              (insert (format "Average request time: %.2f seconds\n\n" avg-time))
+              
+              (insert (format "Total rows processed: %d\n" total-rows-processed))
+              (insert (format "Total tokens used: %d\n" total-tokens))
+              (insert (format "  - Prompt tokens: %d\n" total-prompt-tokens))
+              (insert (format "  - Completion tokens: %d\n" total-completion-tokens))
+              (insert (format "Estimated cost: $%.4f\n\n" total-cost)))
             
             ;; Insert provider summary
             (insert (propertize "Provider Summary\n" 'face 'bold))
             (insert (propertize "================\n\n" 'face 'bold))
             
             (maphash (lambda (provider data)
-                       (let ((requests (nth 0 data))
-                             (successful (nth 1 data))
-                             (tokens (nth 2 data))
-                             (time (nth 3 data))
-                             (rows (nth 4 data)))
-                         (insert (format "%s:\n" provider))
+                       (let* ((requests (nth 0 data))
+                              (successful (nth 1 data))
+                              (tokens (nth 2 data))
+                              (time (nth 3 data))
+                              (rows (nth 4 data))
+                              (provider-cost-per-1k (gethash provider cost-per-1k 0.01))
+                              (cost (* (/ tokens 1000.0) provider-cost-per-1k)))
+                         (insert (propertize (format "%s:\n" provider) 'face 'bold))
                          (insert (format "  Requests: %d (%d successful, %.1f%%)\n" 
                                         requests successful 
                                         (if (> requests 0)
@@ -636,30 +685,47 @@ FORMAT-STRING and ARGS are passed to `message'."
                                           0.0)))
                          (insert (format "  Tokens: %d\n" tokens))
                          (insert (format "  Time: %.2f seconds\n" time))
-                         (insert (format "  Rows: %d\n\n" rows))))
+                         (insert (format "  Rows: %d\n" rows))
+                         (insert (format "  Estimated cost: $%.4f\n\n" cost))))
                      provider-stats)
             
+            ;; Add export options
+            (insert (propertize "Export Options\n" 'face 'bold))
+            (insert (propertize "==============\n\n" 'face 'bold))
+            
+            (insert "Press 'e' to export results as CSV\n")
+            (insert "Press 's' to save as a report file\n\n")
+            
+            ;; Insert request details
             (insert (propertize "Request Details\n" 'face 'bold))
             (insert (propertize "==============\n\n" 'face 'bold))
             
             ;; Insert details for each request
             (cl-loop for stat in (reverse cw-activity-coder--stats)
                     for i from 1
-                    do (insert (format "Request #%d:\n" i))
+                    do (insert (propertize (format "Request #%d:\n" i) 'face 'bold))
                     (insert (format "  Provider: %s\n" (plist-get stat :provider)))
                     (insert (format "  Model: %s\n" (plist-get stat :model)))
                     (insert (format "  Time: %.2f seconds\n" (plist-get stat :time)))
                     (insert (format "  Batch size: %d rows\n" (plist-get stat :batch-size)))
                     (insert (format "  Status: %s\n" 
-                                   (if (plist-get stat :success) "Success" "Failed")))
+                                   (if (plist-get stat :success) 
+                                       (propertize "Success" 'face 'success)
+                                     (propertize "Failed" 'face 'error))))
                     (when (plist-get stat :error)
-                      (insert (format "  Error: %s\n" (plist-get stat :error))))
+                      (insert (propertize 
+                               (format "  Error: %s\n" (plist-get stat :error))
+                               'face 'error)))
                     (when (plist-get stat :success)
                       (insert (format "  Tokens: %d (prompt: %d, completion: %d)\n" 
                                      (plist-get stat :total-tokens)
                                      (plist-get stat :prompt-tokens)
                                      (plist-get stat :completion-tokens))))
                     (insert "\n"))))
+        
+        ;; Add keybindings for export
+        (local-set-key (kbd "e") 'cw-activity-coder-export-results-csv)
+        (local-set-key (kbd "s") 'cw-activity-coder-save-report)
         
         (goto-char (point-min))
         (display-buffer buf '(display-buffer-pop-up-window . nil))))))
@@ -672,28 +738,40 @@ FORMAT-STRING and ARGS are passed to `message'."
     (when (y-or-n-p "Not in CSV mode. Enable it?")
       (csv-mode)))
   
+  ;; Select LLM provider if not set
   (unless cw-activity-coder-llm-provider
     (let ((providers '("xai" "openai" "anthropic" "gemini" "copilot")))
       (let ((choice (completing-read "Select LLM provider: " providers nil t)))
         (setq cw-activity-coder-llm-provider (intern choice)))))
   
+  ;; Confirm with user before proceeding
+  (unless (y-or-n-p (format "Process with %s? This may use API credits." 
+                           cw-activity-coder-llm-provider))
+    (user-error "Operation cancelled"))
+  
+  ;; Setup processing
   (setq cw-activity-coder--current-buffer (current-buffer))
   (setq cw-activity-coder--progress "CW: Starting...")
   (setq cw-activity-coder--stats nil)
   (force-mode-line-update)
   
+  ;; Add reference column for tracking
   (cw-activity-coder--add-ref-column)
+  
+  ;; Calculate batches
   (let* ((total-lines (count-lines (point-min) (point-max)))
+         (header-lines 1) ;; Assuming 1 header line
+         (data-lines (- total-lines header-lines))
          (num-batches
-          (max 1 (ceiling (- total-lines 1)
+          (max 1 (ceiling data-lines
                           cw-activity-coder-max-batch-size)))
          (batch-ranges
           (let (ranges)
             (dotimes (i num-batches)
               (let ((start
-                     (+ 2 (* i cw-activity-coder-max-batch-size)))
+                     (+ (1+ header-lines) (* i cw-activity-coder-max-batch-size)))
                     (end
-                     (min (+ 2
+                     (min (+ (1+ header-lines)
                              (* (1+ i)
                                 cw-activity-coder-max-batch-size))
                           total-lines)))
@@ -701,16 +779,36 @@ FORMAT-STRING and ARGS are passed to `message'."
             (nreverse ranges)))
          (results '())
          (sent 0)
-         (completed 0))
+         (completed 0)
+         (errors 0))
+    
+    ;; Initialize request counter
     (setq cw-activity-coder--active-requests 0)
-    (if (null batch-ranges)
+    
+    ;; Check if we have data to process
+    (if (< data-lines 1)
         (message "No data to process")
+      
+      ;; Show estimated cost if available
+      (when-let* ((cost-per-1k (pcase cw-activity-coder-llm-provider
+                                ('openai 0.01) ;; Example costs - adjust as needed
+                                ('anthropic 0.015)
+                                ('xai 0.01)
+                                ('gemini 0.0035)
+                                ('copilot 0.01)
+                                (_ nil)))
+                  (est-tokens (* data-lines 200)) ;; Rough estimate of tokens
+                  (est-cost (* (/ est-tokens 1000.0) cost-per-1k)))
+        (message "Estimated cost: $%.4f (based on ~%d tokens)" est-cost est-tokens))
+      
+      ;; Process each batch
       (dolist (range batch-ranges)
         (let ((batch (cw-activity-coder--parse-buffer-to-json
                       (car range) (cdr range))))
           (if (null batch)
               (progn
-                (setq completed (1+ completed))
+                (cl-incf completed)
+                (cl-incf errors)
                 (cw-activity-coder--update-progress
                  sent completed num-batches))
             (cw-activity-coder--api-request
@@ -718,16 +816,21 @@ FORMAT-STRING and ARGS are passed to `message'."
              (lambda (batch-results)
                (when batch-results
                  (setq results (append results batch-results)))
-               (setq completed (1+ completed))
+               (cl-incf completed)
+               (unless batch-results
+                 (cl-incf errors))
                (cw-activity-coder--update-progress
                 sent completed num-batches)
                (when (= completed num-batches)
                  (cw-activity-coder--update-buffer results)
-                 (setq cw-activity-coder--progress "CW: Done!")
+                 (setq cw-activity-coder--progress 
+                       (format "CW: Done! (%d errors)" errors))
                  (force-mode-line-update)
                  (cw-activity-coder--display-results)
-                 (message "Processing complete!"))))))
-        (setq sent (1+ sent))
+                 (if (> errors 0)
+                     (message "Processing complete with %d errors" errors)
+                   (message "Processing complete!")))))))
+        (cl-incf sent)
         (cw-activity-coder--update-progress
          sent completed num-batches)))))
 
@@ -737,6 +840,82 @@ FORMAT-STRING and ARGS are passed to `message'."
   (add-to-list 'mode-line-misc-info cw-activity-coder-mode-line-entry
                t))
 
+(defun cw-activity-coder-export-results-csv ()
+  "Export the results statistics to a CSV file."
+  (interactive)
+  (when cw-activity-coder--stats
+    (let* ((default-filename (format "cw-activity-results-%s.csv" 
+                                    (format-time-string "%Y%m%d-%H%M%S")))
+           (filename (read-file-name "Save CSV to: " nil nil nil default-filename))
+           (provider-stats (make-hash-table :test 'eq)))
+      
+      ;; Collect provider stats
+      (dolist (stat cw-activity-coder--stats)
+        (let* ((provider (plist-get stat :provider))
+               (provider-data (gethash provider provider-stats (list 0 0 0 0.0 0)))
+               (requests (1+ (nth 0 provider-data)))
+               (successful (+ (nth 1 provider-data) 
+                              (if (plist-get stat :success) 1 0)))
+               (tokens (+ (nth 2 provider-data) 
+                          (plist-get stat :total-tokens 0)))
+               (time (+ (nth 3 provider-data) 
+                        (plist-get stat :time 0.0)))
+               (rows (+ (nth 4 provider-data) 
+                        (plist-get stat :batch-size 0))))
+          (puthash provider (list requests successful tokens time rows) provider-stats)))
+      
+      ;; Write CSV file
+      (with-temp-file filename
+        (insert "Provider,Requests,Successful,Success Rate,Tokens,Time,Rows\n")
+        (maphash (lambda (provider data)
+                   (let ((requests (nth 0 data))
+                         (successful (nth 1 data))
+                         (tokens (nth 2 data))
+                         (time (nth 3 data))
+                         (rows (nth 4 data))
+                         (success-rate (if (> (nth 0 data) 0)
+                                          (* 100.0 (/ (nth 1 data) (nth 0 data)))
+                                        0.0)))
+                     (insert (format "%s,%d,%d,%.1f%%,%d,%.2f,%d\n"
+                                    provider requests successful 
+                                    success-rate tokens time rows))))
+                 provider-stats)
+        
+        ;; Add summary row
+        (let ((total-requests (length cw-activity-coder--stats))
+              (successful-requests (cl-count-if (lambda (s) (plist-get s :success)) 
+                                              cw-activity-coder--stats))
+              (total-tokens (cl-reduce #'+ cw-activity-coder--stats 
+                                     :key (lambda (s) (plist-get s :total-tokens)) 
+                                     :initial-value 0))
+              (total-time (cl-reduce #'+ cw-activity-coder--stats 
+                                    :key (lambda (s) (plist-get s :time)) 
+                                    :initial-value 0.0))
+              (total-rows (cl-reduce #'+ cw-activity-coder--stats 
+                                   :key (lambda (s) (plist-get s :batch-size)) 
+                                   :initial-value 0))
+              (success-rate (if (> (length cw-activity-coder--stats) 0)
+                               (* 100.0 (/ (cl-count-if (lambda (s) (plist-get s :success)) 
+                                                      cw-activity-coder--stats)
+                                          (length cw-activity-coder--stats)))
+                             0.0)))
+          (insert (format "TOTAL,%d,%d,%.1f%%,%d,%.2f,%d\n"
+                         total-requests successful-requests 
+                         success-rate total-tokens total-time total-rows))))
+      
+      (message "Results exported to %s" filename))))
+
+(defun cw-activity-coder-save-report ()
+  "Save the results as a formatted report."
+  (interactive)
+  (when (and cw-activity-coder--stats cw-activity-coder--results-buffer)
+    (let* ((default-filename (format "cw-activity-report-%s.txt" 
+                                    (format-time-string "%Y%m%d-%H%M%S")))
+           (filename (read-file-name "Save report to: " nil nil nil default-filename)))
+      (with-current-buffer cw-activity-coder--results-buffer
+        (write-region (point-min) (point-max) filename))
+      (message "Report saved to %s" filename))))
+
 ;;;###autoload
 (defun cw-activity-coder-show-results ()
   "Show the results of the last processing run."
@@ -744,6 +923,67 @@ FORMAT-STRING and ARGS are passed to `message'."
   (if cw-activity-coder--stats
       (cw-activity-coder--display-results)
     (message "No processing has been done yet.")))
+
+;;;###autoload
+(defun cw-activity-coder-setup ()
+  "Setup the cw-activity-coder package interactively."
+  (interactive)
+  (let ((provider (completing-read 
+                  "Select default LLM provider: "
+                  '("xai" "openai" "anthropic" "gemini" "copilot")
+                  nil t)))
+    (setq cw-activity-coder-llm-provider (intern provider))
+    
+    ;; Try to get API key
+    (condition-case nil
+        (cw-activity-coder--get-api-key)
+      (error
+       (let ((key (read-passwd (format "Enter API key for %s: " provider))))
+         (when (and key (not (string-empty-p key)))
+           (setq cw-activity-coder-api-key key)
+           (when (yes-or-no-p "Save this API key for future sessions?")
+             (let ((save-method (completing-read 
+                                "Save to: " 
+                                '("Environment variable" "Key file") nil t)))
+               (pcase save-method
+                 ("Environment variable"
+                  (let ((env-var (alist-get (intern provider) 
+                                           cw-activity-coder-api-key-env-vars)))
+                    (message "Add this to your shell config: export %s=\"%s\""
+                             env-var key)))
+                 ("Key file"
+                  (let ((key-file (alist-get (intern provider) 
+                                            cw-activity-coder-api-key-files)))
+                    (with-temp-file (expand-file-name key-file)
+                      (insert key))
+                    (chmod (expand-file-name key-file) #o600)
+                    (message "API key saved to %s" key-file))))))))))
+    
+    ;; Select model
+    (let* ((default-model (alist-get (intern provider) cw-activity-coder-models))
+           (model-options (pcase (intern provider)
+                           ('openai '("gpt-4o" "gpt-4-turbo" "gpt-3.5-turbo"))
+                           ('anthropic '("claude-3-opus-20240229" "claude-3-sonnet-20240229" "claude-3-haiku-20240307"))
+                           ('xai '("grok-2-latest" "grok-1"))
+                           ('gemini '("gemini-1.5-pro" "gemini-1.5-flash"))
+                           ('copilot '("copilot-4"))
+                           (_ (list default-model))))
+           (selected-model (completing-read 
+                           (format "Select model (default: %s): " default-model)
+                           model-options nil nil nil nil default-model)))
+      (setq cw-activity-coder-model selected-model))
+    
+    ;; Configure batch size
+    (let* ((default-batch-size cw-activity-coder-max-batch-size)
+           (batch-size-input (read-string 
+                             (format "Max batch size (default: %d): " default-batch-size)
+                             nil nil (number-to-string default-batch-size))))
+      (setq cw-activity-coder-max-batch-size (string-to-number batch-size-input)))
+    
+    ;; Configure debug mode
+    (setq cw-activity-coder-debug (yes-or-no-p "Enable debug mode? "))
+    
+    (message "Setup complete. Use M-x cw-activity-coder-process-buffer to process CSV files.")))
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
