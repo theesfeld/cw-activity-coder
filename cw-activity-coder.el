@@ -65,14 +65,19 @@
       (error "activitycodes.json not found at %s" json-file))
     (with-temp-buffer
       (insert-file-contents json-file)
-      (json-parse-buffer))))
+      (let ((json-object-type 'alist)
+            (json-array-type 'list))
+        (json-read-from-string (buffer-string))))))
 
 (defun cw-activity-coder--parse-csv-line ()
   "Parse current CSV line into a list of fields."
   (let* ((line
           (buffer-substring-no-properties
            (line-beginning-position) (line-end-position)))
-         (fields (split-string line "," t)))
+         ;; Use csv-mode's parsing to handle quoted fields properly
+         (fields (if (fboundp 'csv-split-string)
+                     (csv-split-string line)
+                   (split-string line "," t))))
     (message "DEBUG: Parsed line %d, fields: %d - %s"
              (line-number-at-pos)
              (length fields)
@@ -191,16 +196,22 @@
                  'content
                  (alist-get
                   'message (aref (alist-get 'choices data) 0))))
-               (result (json-parse-string content)))
+               (result (condition-case err
+                           (json-read-from-string content)
+                         (error
+                          (message "JSON parse error: %s" err)
+                          nil))))
           (message "DEBUG: Raw response: %s" content)
           (cl-decf cw-activity-coder--active-requests)
-          (funcall callback
-                   (mapcar
-                    (lambda (item)
-                      (list
-                       (cons "ref" (gethash "ref" item))
-                       (cons "cw_at" (gethash "cw_at" item))))
-                    (append result nil))))))
+          (if result
+              (funcall callback
+                       (mapcar
+                        (lambda (item)
+                          (list
+                           (cons "ref" (alist-get 'ref item))
+                           (cons "cw_at" (alist-get 'cw_at item))))
+                        result))
+            (funcall callback nil)))))
      :error
      (cl-function
       (lambda (&key error-thrown &allow-other-keys)
@@ -210,61 +221,67 @@
 
 (defun cw-activity-coder--update-buffer (results)
   "Update CSV buffer with RESULTS from API."
-  (with-current-buffer cw-activity-coder--current-buffer
-    (save-excursion
-      (goto-char (point-min))
-      (let ((inhibit-read-only t)
-            (ref-index
-             (- (length cw-activity-coder--original-header) 2))
-            (new-header
-             (butlast cw-activity-coder--original-header 1))
-            (line-num 0))
-        (message "DEBUG: Updating buffer, ref-index: %d, results: %s"
-                 ref-index
-                 (json-encode results))
-        (delete-region (point) (line-end-position))
-        (insert (mapconcat #'identity new-header ","))
-        (forward-line 1)
-        (while (not (eobp))
-          (let* ((fields (cw-activity-coder--parse-csv-line))
-                 (ref (nth ref-index fields))
-                 (result
-                  (or (cl-find
+  (when (buffer-live-p cw-activity-coder--current-buffer)
+    (with-current-buffer cw-activity-coder--current-buffer
+      (save-excursion
+        (goto-char (point-min))
+        (let ((inhibit-read-only t)
+              (ref-index
+               (- (length cw-activity-coder--original-header) 2))
+              (new-header
+               (butlast cw-activity-coder--original-header 1))
+              (line-num 0))
+          (message "DEBUG: Updating buffer, ref-index: %d, results count: %d"
+                   ref-index
+                   (length results))
+          (when (> (length new-header) 0)
+            (delete-region (point) (line-end-position))
+            (insert (mapconcat #'identity new-header ",")))
+          (forward-line 1)
+          (while (not (eobp))
+            (let* ((fields (cw-activity-coder--parse-csv-line))
+                   (ref (when (and fields (>= (length fields) ref-index))
+                          (nth ref-index fields)))
+                   (result
+                    (when ref
+                      (cl-find
                        ref
                        results
                        :key (lambda (r) (alist-get "ref" r))
-                       :test #'string=)
-                      (when (< line-num (length results))
-                        (nth line-num results))))
-                 (cw-at
-                  (or (when result
-                        (alist-get "cw_at" result))
-                      "NDE")))
-            (message
-             "DEBUG: Update line %d, ref: %s, cw_at: %s, result: %s"
-             (line-number-at-pos)
-             ref
-             cw-at
-             (if result
-                 (json-encode result)
-               "nil"))
-            (delete-region (point) (line-end-position))
-            (insert
-             (mapconcat #'identity (butlast fields 2) ",") "," cw-at))
-          (cl-incf line-num))
-        (forward-line 1))
-      (message "DEBUG: Buffer after update: %s" (buffer-string)))))
+                       :test #'string=)))
+                   (cw-at
+                    (or (when result
+                          (alist-get "cw_at" result))
+                        "NDE")))
+              (message
+               "DEBUG: Update line %d, ref: %s, cw_at: %s"
+               (line-number-at-pos)
+               (or ref "nil")
+               cw-at)
+              (when (and fields (>= (length fields) 2))
+                (delete-region (point) (line-end-position))
+                (insert
+                 (mapconcat #'identity (butlast fields 2) ",") "," cw-at)))
+            (cl-incf line-num)
+            (forward-line 1)))))))
 
 ;;;###autoload
 (defun cw-activity-coder-process-buffer ()
   "Process the current CSV buffer, adding 'cw_at' codes via xAI API."
   (interactive)
+  (unless (derived-mode-p 'csv-mode)
+    (when (y-or-n-p "Not in CSV mode. Enable it?")
+      (csv-mode)))
+  
   (setq cw-activity-coder--current-buffer (current-buffer))
+  (setq cw-activity-coder--progress "CW: Starting...")
+  (force-mode-line-update)
+  
   (cw-activity-coder--add-ref-column)
   (let* ((total-lines (count-lines (point-min) (point-max)))
          (num-batches
-          (ceiling (- total-lines 1)
-                   cw-activity-coder-max-batch-size))
+          (max 1 (ceiling (- total-lines 1)
+                          cw-activity-coder-max-batch-size)))
          (batch-ranges
           (let (ranges)
             (dotimes (i num-batches)
@@ -281,22 +298,32 @@
          (sent 0)
          (completed 0))
     (setq cw-activity-coder--active-requests 0)
-    (dolist (range batch-ranges)
-      (cw-activity-coder--api-request
-       (cw-activity-coder--parse-buffer-to-json
-        (car range) (cdr range))
-       (lambda (batch-results)
-         (when batch-results
-           (setq results (append results batch-results)))
-         (setq completed (1+ completed))
-         (cw-activity-coder--update-progress
-          sent completed num-batches)
-         (when (= completed num-batches)
-           (cw-activity-coder--update-buffer results)
-           (message "Done!"))))
-      (setq sent (1+ sent))
-      (cw-activity-coder--update-progress
-       sent completed num-batches))))
+    (if (null batch-ranges)
+        (message "No data to process")
+      (dolist (range batch-ranges)
+        (let ((batch (cw-activity-coder--parse-buffer-to-json
+                      (car range) (cdr range))))
+          (if (null batch)
+              (progn
+                (setq completed (1+ completed))
+                (cw-activity-coder--update-progress
+                 sent completed num-batches))
+            (cw-activity-coder--api-request
+             batch
+             (lambda (batch-results)
+               (when batch-results
+                 (setq results (append results batch-results)))
+               (setq completed (1+ completed))
+               (cw-activity-coder--update-progress
+                sent completed num-batches)
+               (when (= completed num-batches)
+                 (cw-activity-coder--update-buffer results)
+                 (setq cw-activity-coder--progress "CW: Done!")
+                 (force-mode-line-update)
+                 (message "Processing complete!"))))))
+        (setq sent (1+ sent))
+        (cw-activity-coder--update-progress
+         sent completed num-batches)))))
 
 (defvar cw-activity-coder-mode-line-entry
   '(:eval cw-activity-coder--progress))
