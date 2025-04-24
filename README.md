@@ -1,10 +1,11 @@
 
 # CW Activity Coder
 
-An Emacs package to process CSV/JSON files with the xAI API, assigning CW activity codes.
+An Emacs package to process CSV/JSON files with various LLM APIs, assigning CW activity codes.
 
 ## Features
 
+- Support for multiple LLM providers (xAI, OpenAI, Anthropic, Google Gemini, GitHub Copilot)
 - Interactive Transient menu
 - Live Org-mode output with error highlighting (NDE codes)
 - Modeline progress display
@@ -12,12 +13,13 @@ An Emacs package to process CSV/JSON files with the xAI API, assigning CW activi
 - Asynchronous API requests with rate limiting
 - Persistent, editable activity codes in ```activitycodes.json```
 - CSV output to a customizable directory
+- Comprehensive results dashboard with provider-specific statistics
 
 ## Requirements
 
 - Emacs 30.1+ (with built-in ```use-package```)
 - Dependencies: ```json```, ```url```, ```transient```, ```org``` (listed in ```Package-Requires```)
-- ```XAI_API_KEY``` environment variable set
+- API key for at least one supported LLM provider
 
 ## Installation
 
@@ -104,10 +106,15 @@ M-x package-install RET transient RET
 ## Customization
 
 - Run ```M-x customize-group RET cw-activity-coder``` to adjust:
-  - ```cw-activity-coder-batch-size```
-  - ```cw-activity-coder-rate-limit```
-  - ```cw-activity-coder-output-dir```
-  - etc.
+  - ```cw-activity-coder-llm-provider``` - Choose your LLM provider
+  - ```cw-activity-coder-api-key``` - Set your API key directly
+  - ```cw-activity-coder-model``` - Override the default model
+  - ```cw-activity-coder-api-key-env-vars``` - Customize environment variable names
+  - ```cw-activity-coder-api-key-files``` - Customize key file locations
+  - ```cw-activity-coder-max-batch-size``` - Adjust batch size for API requests
+  - ```cw-activity-coder-api-timeout``` - Set API request timeout
+  - ```cw-activity-coder-debug``` - Enable/disable debug logging
+  - ```cw-activity-coder-show-results-buffer``` - Show/hide results dashboard
 
 ## Notes
 

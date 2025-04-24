@@ -31,13 +31,47 @@
 (require 'json)
 
 (defgroup cw-activity-coder nil
-  "Assign activity codes to CSV rows using xAI API."
+  "Assign activity codes to CSV rows using LLM APIs."
   :group 'tools
   :prefix "cw-activity-coder-")
 
-(defcustom cw-activity-coder-api-key-env-var "XAI_API_KEY"
-  "Environment variable for xAI API key."
-  :type 'string
+(defcustom cw-activity-coder-llm-provider nil
+  "LLM provider to use for API calls.
+Must be one of: 'xai, 'openai, 'anthropic, 'gemini, 'copilot."
+  :type '(choice
+          (const :tag "xAI" xai)
+          (const :tag "OpenAI" openai)
+          (const :tag "Anthropic" anthropic)
+          (const :tag "Google Gemini" gemini)
+          (const :tag "GitHub Copilot" copilot)
+          (const :tag "Not Set" nil))
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-api-key nil
+  "API key for the selected LLM provider.
+If nil, will try to get from environment variable or auth file."
+  :type '(choice (string :tag "API Key")
+                 (const :tag "Use environment variable or auth file" nil))
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-api-key-env-vars
+  '((xai . "XAI_API_KEY")
+    (openai . "OPENAI_API_KEY")
+    (anthropic . "ANTHROPIC_API_KEY")
+    (gemini . "GEMINI_API_KEY")
+    (copilot . "GITHUB_COPILOT_TOKEN"))
+  "Environment variables for LLM provider API keys."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-api-key-files
+  '((xai . "~/.xai_key")
+    (openai . "~/.openai_key")
+    (anthropic . "~/.anthropic_key")
+    (gemini . "~/.gemini_key")
+    (copilot . "~/.copilot_key"))
+  "Files containing API keys for LLM providers."
+  :type '(alist :key-type symbol :value-type string)
   :group 'cw-activity-coder)
 
 (defcustom cw-activity-coder-max-batch-size 100
@@ -50,9 +84,20 @@
   :type 'integer
   :group 'cw-activity-coder)
 
-(defcustom cw-activity-coder-model "grok-2-latest"
-  "xAI model to use for API calls."
-  :type 'string
+(defcustom cw-activity-coder-models
+  '((xai . "grok-2-latest")
+    (openai . "gpt-4o")
+    (anthropic . "claude-3-opus-20240229")
+    (gemini . "gemini-1.5-pro")
+    (copilot . "copilot-4"))
+  "Default models for each LLM provider."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-model nil
+  "Model to use for API calls. If nil, uses the default for the provider."
+  :type '(choice (string :tag "Model name")
+                 (const :tag "Use provider default" nil))
   :group 'cw-activity-coder)
 
 (defcustom cw-activity-coder-debug nil
@@ -229,27 +274,176 @@ FORMAT-STRING and ARGS are passed to `message'."
         (cw-activity-coder--log "JSON batch to send: %s" (json-encode rows))
         rows))))
 
+(defun cw-activity-coder--get-api-key ()
+  "Get API key for the selected LLM provider."
+  (unless cw-activity-coder-llm-provider
+    (error "LLM provider not set. Please set `cw-activity-coder-llm-provider`"))
+  
+  (or
+   ;; Directly set API key
+   cw-activity-coder-api-key
+   
+   ;; From environment variable
+   (let ((env-var (alist-get cw-activity-coder-llm-provider 
+                             cw-activity-coder-api-key-env-vars)))
+     (when env-var
+       (getenv env-var)))
+   
+   ;; From key file
+   (let ((key-file (alist-get cw-activity-coder-llm-provider 
+                              cw-activity-coder-api-key-files)))
+     (when (and key-file (file-exists-p (expand-file-name key-file)))
+       (with-temp-buffer
+         (insert-file-contents (expand-file-name key-file))
+         (string-trim (buffer-string)))))
+   
+   ;; No key found
+   (error "API key not found for %s. Please set it via custom variable, environment variable, or key file"
+          cw-activity-coder-llm-provider)))
+
+(defun cw-activity-coder--get-model ()
+  "Get model for the selected LLM provider."
+  (or cw-activity-coder-model
+      (alist-get cw-activity-coder-llm-provider cw-activity-coder-models)
+      (error "No model specified for %s" cw-activity-coder-llm-provider)))
+
+(defun cw-activity-coder--get-api-endpoint ()
+  "Get API endpoint for the selected LLM provider."
+  (pcase cw-activity-coder-llm-provider
+    ('xai "https://api.x.ai/v1/chat/completions")
+    ('openai "https://api.openai.com/v1/chat/completions")
+    ('anthropic "https://api.anthropic.com/v1/messages")
+    ('gemini "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent")
+    ('copilot "https://api.githubcopilot.com/chat/completions")
+    (_ (error "Unknown LLM provider: %s" cw-activity-coder-llm-provider))))
+
+(defun cw-activity-coder--prepare-payload (batch)
+  "Prepare API payload for BATCH based on selected LLM provider."
+  (let ((model (cw-activity-coder--get-model))
+        (system-prompt (cw-activity-coder--system-prompt))
+        (user-content (json-encode batch)))
+    (pcase cw-activity-coder-llm-provider
+      ('xai
+       `((model . ,model)
+         (messages . [((role . "system") (content . ,system-prompt))
+                      ((role . "user") (content . ,user-content))])))
+      
+      ('openai
+       `((model . ,model)
+         (messages . [((role . "system") (content . ,system-prompt))
+                      ((role . "user") (content . ,user-content))])))
+      
+      ('anthropic
+       `((model . ,model)
+         (system . ,system-prompt)
+         (messages . [((role . "user") (content . ,user-content))])))
+      
+      ('gemini
+       `((model . ,model)
+         (contents . [((role . "system") (parts . [((text . ,system-prompt))]))
+                      ((role . "user") (parts . [((text . ,user-content))]))])))
+      
+      ('copilot
+       `((model . ,model)
+         (messages . [((role . "system") (content . ,system-prompt))
+                      ((role . "user") (content . ,user-content))])))
+      
+      (_ (error "Unknown LLM provider: %s" cw-activity-coder-llm-provider)))))
+
+(defun cw-activity-coder--prepare-headers ()
+  "Prepare API headers based on selected LLM provider."
+  (let ((api-key (cw-activity-coder--get-api-key)))
+    (pcase cw-activity-coder-llm-provider
+      ('xai
+       `(("Authorization" . ,(concat "Bearer " api-key))
+         ("Content-Type" . "application/json")))
+      
+      ('openai
+       `(("Authorization" . ,(concat "Bearer " api-key))
+         ("Content-Type" . "application/json")))
+      
+      ('anthropic
+       `(("x-api-key" . ,api-key)
+         ("anthropic-version" . "2023-06-01")
+         ("Content-Type" . "application/json")))
+      
+      ('gemini
+       `(("x-goog-api-key" . ,api-key)
+         ("Content-Type" . "application/json")))
+      
+      ('copilot
+       `(("Authorization" . ,(concat "Bearer " api-key))
+         ("Content-Type" . "application/json")))
+      
+      (_ (error "Unknown LLM provider: %s" cw-activity-coder-llm-provider)))))
+
+(defun cw-activity-coder--extract-content (data)
+  "Extract content from API response DATA based on selected LLM provider."
+  (pcase cw-activity-coder-llm-provider
+    ('xai
+     (alist-get 'content
+                (alist-get 'message (aref (alist-get 'choices data) 0))))
+    
+    ('openai
+     (alist-get 'content
+                (alist-get 'message (aref (alist-get 'choices data) 0))))
+    
+    ('anthropic
+     (alist-get 'text
+                (alist-get 'content
+                           (aref (alist-get 'messages data) 0))))
+    
+    ('gemini
+     (alist-get 'text
+                (aref (alist-get 'parts
+                                 (alist-get 'content
+                                            (aref (alist-get 'candidates data) 0))) 0)))
+    
+    ('copilot
+     (alist-get 'content
+                (alist-get 'message (aref (alist-get 'choices data) 0))))
+    
+    (_ (error "Unknown LLM provider: %s" cw-activity-coder-llm-provider))))
+
+(defun cw-activity-coder--extract-usage (data)
+  "Extract token usage from API response DATA based on selected LLM provider."
+  (pcase cw-activity-coder-llm-provider
+    ((or 'xai 'openai 'copilot)
+     (let ((usage (alist-get 'usage data)))
+       (list (alist-get 'prompt_tokens usage 0)
+             (alist-get 'completion_tokens usage 0)
+             (alist-get 'total_tokens usage 0))))
+    
+    ('anthropic
+     (let ((usage (alist-get 'usage data)))
+       (list (alist-get 'input_tokens usage 0)
+             (alist-get 'output_tokens usage 0)
+             (+ (alist-get 'input_tokens usage 0)
+                (alist-get 'output_tokens usage 0)))))
+    
+    ('gemini
+     (let ((usage (alist-get 'usageMetadata data)))
+       (list (alist-get 'promptTokenCount usage 0)
+             (alist-get 'candidatesTokenCount usage 0)
+             (+ (alist-get 'promptTokenCount usage 0)
+                (alist-get 'candidatesTokenCount usage 0)))))
+    
+    (_ (list 0 0 0))))
+
 (defun cw-activity-coder--api-request (batch callback)
-  "Send BATCH to xAI API and call CALLBACK with results."
-  (let* ((api-key
-          (or (getenv cw-activity-coder-api-key-env-var)
-              (error "API key not set")))
-         (payload
-          `((model . ,cw-activity-coder-model)
-            (messages
-             .
-             [((role . "system")
-               (content . ,(cw-activity-coder--system-prompt)))
-              ((role . "user") (content . ,(json-encode batch)))])))
+  "Send BATCH to selected LLM API and call CALLBACK with results."
+  (let* ((api-endpoint (cw-activity-coder--get-api-endpoint))
+         (headers (cw-activity-coder--prepare-headers))
+         (payload (cw-activity-coder--prepare-payload batch))
          (start-time (current-time)))
     (cl-incf cw-activity-coder--active-requests)
-    (cw-activity-coder--log "Sending payload: %s" (json-encode payload))
+    (cw-activity-coder--log "Sending payload to %s: %s" 
+                           cw-activity-coder-llm-provider
+                           (json-encode payload))
     (request
-     "https://api.x.ai/v1/chat/completions"
+     api-endpoint
      :type "POST"
-     :headers
-     `(("Authorization" . ,(concat "Bearer " api-key))
-       ("Content-Type" . "application/json"))
+     :headers headers
      :data (json-encode payload)
      :timeout cw-activity-coder-api-timeout
      :parser 'json-read
@@ -258,14 +452,11 @@ FORMAT-STRING and ARGS are passed to `message'."
       (lambda (&key data &allow-other-keys)
         (let* ((end-time (current-time))
                (elapsed (float-time (time-subtract end-time start-time)))
-               (content
-                (alist-get
-                 'content
-                 (alist-get
-                  'message (aref (alist-get 'choices data) 0))))
-               (prompt-tokens (alist-get 'prompt_tokens (alist-get 'usage data) 0))
-               (completion-tokens (alist-get 'completion_tokens (alist-get 'usage data) 0))
-               (total-tokens (alist-get 'total_tokens (alist-get 'usage data) 0))
+               (content (cw-activity-coder--extract-content data))
+               (usage (cw-activity-coder--extract-usage data))
+               (prompt-tokens (nth 0 usage))
+               (completion-tokens (nth 1 usage))
+               (total-tokens (nth 2 usage))
                (result (condition-case err
                            (json-read-from-string content)
                          (error
@@ -277,6 +468,8 @@ FORMAT-STRING and ARGS are passed to `message'."
                       :completion-tokens completion-tokens
                       :total-tokens total-tokens
                       :batch-size (length batch)
+                      :provider cw-activity-coder-llm-provider
+                      :model (cw-activity-coder--get-model)
                       :success (if result t nil))
                 cw-activity-coder--stats)
           
@@ -302,6 +495,8 @@ FORMAT-STRING and ARGS are passed to `message'."
                       :completion-tokens 0
                       :total-tokens 0
                       :batch-size (length batch)
+                      :provider cw-activity-coder-llm-provider
+                      :model (cw-activity-coder--get-model)
                       :success nil
                       :error error-thrown)
                 cw-activity-coder--stats)
@@ -387,7 +582,23 @@ FORMAT-STRING and ARGS are passed to `message'."
                                                    :initial-value 0))
                  (total-rows-processed (cl-reduce #'+ cw-activity-coder--stats 
                                                 :key (lambda (s) (plist-get s :batch-size)) 
-                                                :initial-value 0)))
+                                                :initial-value 0))
+                 (provider-stats (make-hash-table :test 'eq)))
+            
+            ;; Collect provider stats
+            (dolist (stat cw-activity-coder--stats)
+              (let* ((provider (plist-get stat :provider))
+                     (provider-data (gethash provider provider-stats (list 0 0 0 0.0 0)))
+                     (requests (1+ (nth 0 provider-data)))
+                     (successful (+ (nth 1 provider-data) 
+                                    (if (plist-get stat :success) 1 0)))
+                     (tokens (+ (nth 2 provider-data) 
+                                (plist-get stat :total-tokens 0)))
+                     (time (+ (nth 3 provider-data) 
+                              (plist-get stat :time 0.0)))
+                     (rows (+ (nth 4 provider-data) 
+                              (plist-get stat :batch-size 0))))
+                (puthash provider (list requests successful tokens time rows) provider-stats)))
             
             ;; Insert summary
             (insert (propertize "CW Activity Coder Results\n" 'face 'bold))
@@ -407,6 +618,27 @@ FORMAT-STRING and ARGS are passed to `message'."
             (insert (format "  - Prompt tokens: %d\n" total-prompt-tokens))
             (insert (format "  - Completion tokens: %d\n\n" total-completion-tokens))
             
+            ;; Insert provider summary
+            (insert (propertize "Provider Summary\n" 'face 'bold))
+            (insert (propertize "================\n\n" 'face 'bold))
+            
+            (maphash (lambda (provider data)
+                       (let ((requests (nth 0 data))
+                             (successful (nth 1 data))
+                             (tokens (nth 2 data))
+                             (time (nth 3 data))
+                             (rows (nth 4 data)))
+                         (insert (format "%s:\n" provider))
+                         (insert (format "  Requests: %d (%d successful, %.1f%%)\n" 
+                                        requests successful 
+                                        (if (> requests 0)
+                                            (* 100.0 (/ successful requests))
+                                          0.0)))
+                         (insert (format "  Tokens: %d\n" tokens))
+                         (insert (format "  Time: %.2f seconds\n" time))
+                         (insert (format "  Rows: %d\n\n" rows))))
+                     provider-stats)
+            
             (insert (propertize "Request Details\n" 'face 'bold))
             (insert (propertize "==============\n\n" 'face 'bold))
             
@@ -414,6 +646,8 @@ FORMAT-STRING and ARGS are passed to `message'."
             (cl-loop for stat in (reverse cw-activity-coder--stats)
                     for i from 1
                     do (insert (format "Request #%d:\n" i))
+                    (insert (format "  Provider: %s\n" (plist-get stat :provider)))
+                    (insert (format "  Model: %s\n" (plist-get stat :model)))
                     (insert (format "  Time: %.2f seconds\n" (plist-get stat :time)))
                     (insert (format "  Batch size: %d rows\n" (plist-get stat :batch-size)))
                     (insert (format "  Status: %s\n" 
@@ -432,11 +666,16 @@ FORMAT-STRING and ARGS are passed to `message'."
 
 ;;;###autoload
 (defun cw-activity-coder-process-buffer ()
-  "Process the current CSV buffer, adding 'cw_at' codes via xAI API."
+  "Process the current CSV buffer, adding 'cw_at' codes via LLM API."
   (interactive)
   (unless (derived-mode-p 'csv-mode)
     (when (y-or-n-p "Not in CSV mode. Enable it?")
       (csv-mode)))
+  
+  (unless cw-activity-coder-llm-provider
+    (let ((providers '("xai" "openai" "anthropic" "gemini" "copilot")))
+      (let ((choice (completing-read "Select LLM provider: " providers nil t)))
+        (setq cw-activity-coder-llm-provider (intern choice)))))
   
   (setq cw-activity-coder--current-buffer (current-buffer))
   (setq cw-activity-coder--progress "CW: Starting...")

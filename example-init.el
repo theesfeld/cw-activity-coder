@@ -2,9 +2,18 @@
 (use-package cw-activity-coder
   :vc (:fetcher github :repo "username/cw-activity-coder")
   :custom
-  ;; API Configuration
-  (cw-activity-coder-api-key-env-var "XAI_API_KEY")
-  (cw-activity-coder-model "grok-2-latest")
+  ;; LLM Provider Configuration
+  (cw-activity-coder-llm-provider 'openai)  ;; Choose: 'xai, 'openai, 'anthropic, 'gemini, 'copilot
+  (cw-activity-coder-api-key nil)  ;; Set to your API key or leave nil to use env var or key file
+  
+  ;; Optional: Override default models
+  ;; (cw-activity-coder-model "gpt-4-turbo")  ;; Override default model for the selected provider
+  
+  ;; Optional: Custom API key locations
+  ;; (cw-activity-coder-api-key-env-vars '((openai . "MY_OPENAI_KEY")))  ;; Custom env var names
+  ;; (cw-activity-coder-api-key-files '((openai . "~/.config/openai/key")))  ;; Custom key file paths
+  
+  ;; API Request Configuration
   (cw-activity-coder-api-timeout 300)
   (cw-activity-coder-max-batch-size 100)
   
