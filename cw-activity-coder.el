@@ -1,10 +1,27 @@
 ;;; cw-activity-coder.el --- Assign activity codes to CSV rows using xAI API -*- lexical-binding: t; -*-
 
 ;; Author: William Theesfeld <william@theesfeld.net>
-;; Version: 1.2.5
+;; Version: 1.3.0
 ;; Package-Requires: ((emacs "27.1") (request "0.3.3") (csv-mode "1.25"))
 ;; Keywords: tools, csv, xai, ai
 ;; URL: https://github.com/theesfeld/cw-activity-coder
+
+;;; Commentary:
+;; This package processes CSV files and assigns activity codes to each row
+;; using the xAI API. It adds a 'cw_at' column with the assigned code.
+;;
+;; Usage:
+;;   1. Open a CSV file
+;;   2. Run M-x cw-activity-coder-process-buffer
+;;   3. The buffer will be updated with activity codes
+;;
+;; Configuration:
+;;   (use-package cw-activity-coder
+;;     :custom
+;;     (cw-activity-coder-api-key-env-var "XAI_API_KEY")
+;;     (cw-activity-coder-model "grok-2-latest")
+;;     (cw-activity-coder-debug nil)
+;;     (cw-activity-coder-show-results-buffer t))
 
 ;;; Code:
 
@@ -13,21 +30,45 @@
 (require 'csv-mode)
 (require 'json)
 
+(defgroup cw-activity-coder nil
+  "Assign activity codes to CSV rows using xAI API."
+  :group 'tools
+  :prefix "cw-activity-coder-")
+
 (defcustom cw-activity-coder-api-key-env-var "XAI_API_KEY"
   "Environment variable for xAI API key."
-  :type 'string)
+  :type 'string
+  :group 'cw-activity-coder)
 
 (defcustom cw-activity-coder-max-batch-size 100
   "Max rows per API batch."
-  :type 'integer)
+  :type 'integer
+  :group 'cw-activity-coder)
 
 (defcustom cw-activity-coder-api-timeout 300
   "API timeout in seconds."
-  :type 'integer)
+  :type 'integer
+  :group 'cw-activity-coder)
 
 (defcustom cw-activity-coder-model "grok-2-latest"
   "xAI model to use for API calls."
-  :type 'string)
+  :type 'string
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-debug nil
+  "Enable debug messages."
+  :type 'boolean
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-show-results-buffer t
+  "Show results buffer after processing."
+  :type 'boolean
+  :group 'cw-activity-coder)
+
+(defcustom cw-activity-coder-results-buffer-name "*CW Activity Coder Results*"
+  "Name of the results buffer."
+  :type 'string
+  :group 'cw-activity-coder)
 
 (defvar cw-activity-coder--package-dir
   (file-name-directory (or load-file-name (buffer-file-name)))
@@ -44,6 +85,29 @@
 
 (defvar cw-activity-coder--original-header nil
   "Original CSV header with 'ref' and 'cw_at' added.")
+
+(defvar cw-activity-coder--stats nil
+  "Statistics about API usage.")
+
+(defvar cw-activity-coder--results-buffer nil
+  "Buffer for displaying results.")
+
+(defvar-local cw-activity-coder-results-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") 'quit-window)
+    map)
+  "Keymap for `cw-activity-coder-results-mode'.")
+
+(define-derived-mode cw-activity-coder-results-mode special-mode "CW Results"
+  "Major mode for viewing CW Activity Coder results."
+  :group 'cw-activity-coder
+  (setq buffer-read-only t))
+
+(defun cw-activity-coder--log (format-string &rest args)
+  "Log message if debug is enabled.
+FORMAT-STRING and ARGS are passed to `message'."
+  (when cw-activity-coder-debug
+    (apply #'message (concat "CW-DEBUG: " format-string) args)))
 
 (defun cw-activity-coder--update-progress (sent completed total)
   "Update mode-line progress with SENT, COMPLETED, and TOTAL."
@@ -78,26 +142,26 @@
          (fields (if (fboundp 'csv-split-string)
                      (csv-split-string line)
                    (split-string line "," t))))
-    (message "DEBUG: Parsed line %d, fields: %d - %s"
-             (line-number-at-pos)
-             (length fields)
-             fields)
+    (cw-activity-coder--log "Parsed line %d, fields: %d - %s"
+                           (line-number-at-pos)
+                           (length fields)
+                           fields)
     (when cw-activity-coder--original-header
       (let ((expected (length cw-activity-coder--original-header))
             (actual (length fields)))
         (cond
          ((< actual expected)
-          (message "DEBUG: Line %d short, padding: %d -> %d"
-                   (line-number-at-pos)
-                   actual
-                   expected)
+          (cw-activity-coder--log "Line %d short, padding: %d -> %d"
+                                 (line-number-at-pos)
+                                 actual
+                                 expected)
           (setq fields
                 (append fields (make-list (- expected actual) ""))))
          ((> actual expected)
-          (message "DEBUG: Line %d long, truncating: %d -> %d"
-                   (line-number-at-pos)
-                   actual
-                   expected)
+          (cw-activity-coder--log "Line %d long, truncating: %d -> %d"
+                                 (line-number-at-pos)
+                                 actual
+                                 expected)
           (setq fields (butlast fields (- actual expected)))))))
     fields))
 
@@ -111,12 +175,12 @@
     (save-excursion
       (goto-char (point-min))
       (let ((inhibit-read-only t))
-        (message "DEBUG: Starting ref column addition, buffer: %s"
-                 (buffer-name))
-        (message "DEBUG: Before: %s" (buffer-string))
+        (cw-activity-coder--log "Starting ref column addition, buffer: %s"
+                               (buffer-name))
+        (cw-activity-coder--log "Before: %s" (buffer-string))
         (let* ((header (cw-activity-coder--parse-csv-line))
                (new-header (append header (list "ref" "cw_at"))))
-          (message "DEBUG: Header: %s" header)
+          (cw-activity-coder--log "Header: %s" header)
           (setq cw-activity-coder--original-header new-header)
           (delete-region (point) (line-end-position))
           (insert (mapconcat #'identity new-header ","))
@@ -128,11 +192,11 @@
               (insert
                (mapconcat #'identity (append fields (list ref ""))
                           ","))
-              (message "DEBUG: Added ref at line %d: %s"
-                       (line-number-at-pos)
-                       ref))
+              (cw-activity-coder--log "Added ref at line %d: %s"
+                                     (line-number-at-pos)
+                                     ref))
             (forward-line 1)))
-        (message "DEBUG: After ref addition: %s" (buffer-string))))))
+        (cw-activity-coder--log "After ref addition: %s" (buffer-string))))))
 
 (defun cw-activity-coder--system-prompt ()
   "Generate system prompt for xAI API."
@@ -150,7 +214,7 @@
             (ref-index
              (- (length cw-activity-coder--original-header) 2))
             (rows '()))
-        (message "DEBUG: Ref index: %d, Header: %s" ref-index header)
+        (cw-activity-coder--log "Ref index: %d, Header: %s" ref-index header)
         (while (and (< (line-number-at-pos) end-line) (not (eobp)))
           (forward-line 1)
           (when (not (eobp))
@@ -162,7 +226,7 @@
                 (push (cons (nth i header) (nth i row-fields)) row))
               (push (cons "ref" ref) row)
               (push row rows))))
-        (message "DEBUG: JSON batch to send: %s" (json-encode rows))
+        (cw-activity-coder--log "JSON batch to send: %s" (json-encode rows))
         rows))))
 
 (defun cw-activity-coder--api-request (batch callback)
@@ -176,9 +240,10 @@
              .
              [((role . "system")
                (content . ,(cw-activity-coder--system-prompt)))
-              ((role . "user") (content . ,(json-encode batch)))]))))
+              ((role . "user") (content . ,(json-encode batch)))])))
+         (start-time (current-time)))
     (cl-incf cw-activity-coder--active-requests)
-    (message "DEBUG: Sending payload: %s" (json-encode payload))
+    (cw-activity-coder--log "Sending payload: %s" (json-encode payload))
     (request
      "https://api.x.ai/v1/chat/completions"
      :type "POST"
@@ -191,17 +256,31 @@
      :success
      (cl-function
       (lambda (&key data &allow-other-keys)
-        (let* ((content
+        (let* ((end-time (current-time))
+               (elapsed (float-time (time-subtract end-time start-time)))
+               (content
                 (alist-get
                  'content
                  (alist-get
                   'message (aref (alist-get 'choices data) 0))))
+               (prompt-tokens (alist-get 'prompt_tokens (alist-get 'usage data) 0))
+               (completion-tokens (alist-get 'completion_tokens (alist-get 'usage data) 0))
+               (total-tokens (alist-get 'total_tokens (alist-get 'usage data) 0))
                (result (condition-case err
                            (json-read-from-string content)
                          (error
                           (message "JSON parse error: %s" err)
                           nil))))
-          (message "DEBUG: Raw response: %s" content)
+          ;; Record stats
+          (push (list :time elapsed
+                      :prompt-tokens prompt-tokens
+                      :completion-tokens completion-tokens
+                      :total-tokens total-tokens
+                      :batch-size (length batch)
+                      :success (if result t nil))
+                cw-activity-coder--stats)
+          
+          (cw-activity-coder--log "Raw response: %s" content)
           (cl-decf cw-activity-coder--active-requests)
           (if result
               (funcall callback
@@ -215,9 +294,21 @@
      :error
      (cl-function
       (lambda (&key error-thrown &allow-other-keys)
-        (message "DEBUG: API error: %s" error-thrown)
-        (cl-decf cw-activity-coder--active-requests)
-        (funcall callback nil))))))
+        (let* ((end-time (current-time))
+               (elapsed (float-time (time-subtract end-time start-time))))
+          ;; Record error stats
+          (push (list :time elapsed
+                      :prompt-tokens 0
+                      :completion-tokens 0
+                      :total-tokens 0
+                      :batch-size (length batch)
+                      :success nil
+                      :error error-thrown)
+                cw-activity-coder--stats)
+          
+          (message "API error: %s" error-thrown)
+          (cl-decf cw-activity-coder--active-requests)
+          (funcall callback nil)))))))
 
 (defun cw-activity-coder--update-buffer (results)
   "Update CSV buffer with RESULTS from API."
@@ -231,9 +322,9 @@
               (new-header
                (butlast cw-activity-coder--original-header 1))
               (line-num 0))
-          (message "DEBUG: Updating buffer, ref-index: %d, results count: %d"
-                   ref-index
-                   (length results))
+          (cw-activity-coder--log "Updating buffer, ref-index: %d, results count: %d"
+                                 ref-index
+                                 (length results))
           (when (> (length new-header) 0)
             (delete-region (point) (line-end-position))
             (insert (mapconcat #'identity new-header ",")))
@@ -253,8 +344,8 @@
                     (or (when result
                           (alist-get "cw_at" result))
                         "NDE")))
-              (message
-               "DEBUG: Update line %d, ref: %s, cw_at: %s"
+              (cw-activity-coder--log
+               "Update line %d, ref: %s, cw_at: %s"
                (line-number-at-pos)
                (or ref "nil")
                cw-at)
@@ -264,6 +355,80 @@
                  (mapconcat #'identity (butlast fields 2) ",") "," cw-at)))
             (cl-incf line-num)
             (forward-line 1)))))))
+
+(defun cw-activity-coder--display-results ()
+  "Display results in a dedicated buffer."
+  (when cw-activity-coder-show-results-buffer
+    (let ((buf (get-buffer-create cw-activity-coder-results-buffer-name)))
+      (setq cw-activity-coder--results-buffer buf)
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (cw-activity-coder-results-mode)
+          
+          ;; Calculate statistics
+          (let* ((total-requests (length cw-activity-coder--stats))
+                 (successful-requests (cl-count-if (lambda (s) (plist-get s :success)) 
+                                                  cw-activity-coder--stats))
+                 (total-time (cl-reduce #'+ cw-activity-coder--stats 
+                                        :key (lambda (s) (plist-get s :time)) 
+                                        :initial-value 0.0))
+                 (avg-time (if (> total-requests 0)
+                              (/ total-time total-requests)
+                            0))
+                 (total-tokens (cl-reduce #'+ cw-activity-coder--stats 
+                                         :key (lambda (s) (plist-get s :total-tokens)) 
+                                         :initial-value 0))
+                 (total-prompt-tokens (cl-reduce #'+ cw-activity-coder--stats 
+                                               :key (lambda (s) (plist-get s :prompt-tokens)) 
+                                               :initial-value 0))
+                 (total-completion-tokens (cl-reduce #'+ cw-activity-coder--stats 
+                                                   :key (lambda (s) (plist-get s :completion-tokens)) 
+                                                   :initial-value 0))
+                 (total-rows-processed (cl-reduce #'+ cw-activity-coder--stats 
+                                                :key (lambda (s) (plist-get s :batch-size)) 
+                                                :initial-value 0)))
+            
+            ;; Insert summary
+            (insert (propertize "CW Activity Coder Results\n" 'face 'bold))
+            (insert (propertize "========================\n\n" 'face 'bold))
+            
+            (insert (format "Total API requests: %d\n" total-requests))
+            (insert (format "Successful requests: %d (%.1f%%)\n" 
+                           successful-requests 
+                           (if (> total-requests 0)
+                               (* 100.0 (/ successful-requests total-requests))
+                             0.0)))
+            (insert (format "Total processing time: %.2f seconds\n" total-time))
+            (insert (format "Average request time: %.2f seconds\n\n" avg-time))
+            
+            (insert (format "Total rows processed: %d\n" total-rows-processed))
+            (insert (format "Total tokens used: %d\n" total-tokens))
+            (insert (format "  - Prompt tokens: %d\n" total-prompt-tokens))
+            (insert (format "  - Completion tokens: %d\n\n" total-completion-tokens))
+            
+            (insert (propertize "Request Details\n" 'face 'bold))
+            (insert (propertize "==============\n\n" 'face 'bold))
+            
+            ;; Insert details for each request
+            (cl-loop for stat in (reverse cw-activity-coder--stats)
+                    for i from 1
+                    do (insert (format "Request #%d:\n" i))
+                    (insert (format "  Time: %.2f seconds\n" (plist-get stat :time)))
+                    (insert (format "  Batch size: %d rows\n" (plist-get stat :batch-size)))
+                    (insert (format "  Status: %s\n" 
+                                   (if (plist-get stat :success) "Success" "Failed")))
+                    (when (plist-get stat :error)
+                      (insert (format "  Error: %s\n" (plist-get stat :error))))
+                    (when (plist-get stat :success)
+                      (insert (format "  Tokens: %d (prompt: %d, completion: %d)\n" 
+                                     (plist-get stat :total-tokens)
+                                     (plist-get stat :prompt-tokens)
+                                     (plist-get stat :completion-tokens))))
+                    (insert "\n"))))
+        
+        (goto-char (point-min))
+        (display-buffer buf '(display-buffer-pop-up-window . nil))))))
 
 ;;;###autoload
 (defun cw-activity-coder-process-buffer ()
@@ -275,6 +440,7 @@
   
   (setq cw-activity-coder--current-buffer (current-buffer))
   (setq cw-activity-coder--progress "CW: Starting...")
+  (setq cw-activity-coder--stats nil)
   (force-mode-line-update)
   
   (cw-activity-coder--add-ref-column)
@@ -320,6 +486,7 @@
                  (cw-activity-coder--update-buffer results)
                  (setq cw-activity-coder--progress "CW: Done!")
                  (force-mode-line-update)
+                 (cw-activity-coder--display-results)
                  (message "Processing complete!"))))))
         (setq sent (1+ sent))
         (cw-activity-coder--update-progress
@@ -330,6 +497,14 @@
 (unless (member cw-activity-coder-mode-line-entry mode-line-misc-info)
   (add-to-list 'mode-line-misc-info cw-activity-coder-mode-line-entry
                t))
+
+;;;###autoload
+(defun cw-activity-coder-show-results ()
+  "Show the results of the last processing run."
+  (interactive)
+  (if cw-activity-coder--stats
+      (cw-activity-coder--display-results)
+    (message "No processing has been done yet.")))
 
 (provide 'cw-activity-coder)
 ;;; cw-activity-coder.el ends here
