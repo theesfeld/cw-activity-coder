@@ -1,4 +1,3 @@
-
 # CW Activity Coder
 
 ![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
@@ -130,15 +129,15 @@ The interactive setup will guide you through this process and offer to save your
 
 Run `M-x customize-group RET cw-activity-coder` to adjust:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `cw-activity-coder-llm-provider` | LLM provider to use | `nil` (prompt) |
-| `cw-activity-coder-api-key` | API key | `nil` (use env/file) |
-| `cw-activity-coder-model` | Model name | Provider default |
-| `cw-activity-coder-max-batch-size` | Rows per API batch | `100` |
-| `cw-activity-coder-api-timeout` | API timeout in seconds | `300` |
-| `cw-activity-coder-debug` | Enable debug messages | `nil` |
-| `cw-activity-coder-show-results-buffer` | Show results dashboard | `t` |
+| Variable                                | Description            | Default              |
+|-----------------------------------------|------------------------|----------------------|
+| `cw-activity-coder-llm-provider`        | LLM provider to use    | `nil` (prompt)       |
+| `cw-activity-coder-api-key`             | API key                | `nil` (use env/file) |
+| `cw-activity-coder-model`               | Model name             | Provider default     |
+| `cw-activity-coder-max-batch-size`      | Rows per API batch     | `100`                |
+| `cw-activity-coder-api-timeout`         | API timeout in seconds | `300`                |
+| `cw-activity-coder-debug`               | Enable debug messages  | `nil`                |
+| `cw-activity-coder-show-results-buffer` | Show results dashboard | `t`                  |
 
 ## Notes
 
